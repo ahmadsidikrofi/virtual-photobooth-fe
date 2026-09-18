@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { Users } from "lucide-react";
 import { LobbyHeader } from "./LobbyHeader";
 import { LocalVideoStage } from "./LocalVideoStage";
 import { PeerVideoStage } from "./PeerVideoStage";
@@ -10,13 +11,15 @@ import { PhotoCuratingScreen } from "./PhotoCuratingScreen";
 import { StripDesignScreen } from "./StripDesignScreen";
 import { MediaPermissionDialog } from "./MediaPermissionDialog";
 import { usePhotoboothEngine } from "@/hooks/usePhotoboothEngine";
+import { usePeerRoom } from "@/hooks/usePeerRoom";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { saveCuratedSession, GRID_CONFIGS } from "@/lib/room";
 
 export function RoomLobby({ roomId }) {
-  const router = useRouter();
-  const videoRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const videoRef = localVideoRef;
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
@@ -27,8 +30,6 @@ export function RoomLobby({ roomId }) {
   const setStudioMode = useRoomStore((s) => s.setStudioMode);
   const copied = useRoomStore((s) => s.copied);
   const setCopied = useRoomStore((s) => s.setCopied);
-  const isPeerJoined = useRoomStore((s) => s.isPeerJoined);
-  const setIsPeerJoined = useRoomStore((s) => s.setIsPeerJoined);
 
   // Global Photobooth Session Store (Zustand)
   const sessionState = usePhotoboothStore((s) => s.sessionState);
@@ -51,7 +52,36 @@ export function RoomLobby({ roomId }) {
   const [permissionDialogMode, setPermissionDialogMode] = useState("camera");
 
   // 1. Photobooth Engine Hook (Hardware Capture Loop & Countdown Audio)
-  const engine = usePhotoboothEngine({ videoRef });
+  const engine = usePhotoboothEngine({
+    localVideoRef,
+    remoteVideoRef,
+    totalShots: 8,
+  });
+
+  // 2. Real-time PeerJS WebRTC Connection Hook
+  const {
+    role,
+    isHost,
+    isGuest,
+    isRoomFull,
+    isPeerReady,
+    isLocalReady,
+    isPeerCameraActive,
+    remoteStream,
+    peerConnectionStatus,
+    triggerRemoteStartSession,
+    syncSettings,
+    toggleReady,
+    leaveRoom,
+    sendCameraState,
+    handlePeerLeave,
+  } = usePeerRoom({
+    roomId,
+    localStream: mediaStream,
+    onRemoteStartSession: () => {
+      engine.startSession();
+    },
+  });
 
   // Shareable Room URL
   const roomUrl =
@@ -79,7 +109,7 @@ export function RoomLobby({ roomId }) {
       if (!AudioContextClass) return;
 
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current.close().catch(() => { });
       }
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
@@ -113,7 +143,7 @@ export function RoomLobby({ roomId }) {
       };
 
       if (audioCtx.state === "suspended") {
-        audioCtx.resume().catch(() => {});
+        audioCtx.resume().catch(() => { });
       }
 
       checkVolume();
@@ -261,7 +291,7 @@ export function RoomLobby({ roomId }) {
             setCameraActive(false);
           }
         };
-      } catch {}
+      } catch { }
 
       try {
         micStatus = await navigator.permissions.query({ name: "microphone" });
@@ -276,7 +306,7 @@ export function RoomLobby({ roomId }) {
             setIsMicAvailable(false);
           }
         };
-      } catch {}
+      } catch { }
     };
 
     initPermissionListeners();
@@ -317,7 +347,7 @@ export function RoomLobby({ roomId }) {
 
         if (videoRef.current) {
           videoRef.current.srcObject = streamRef.current;
-          videoRef.current.play().catch(() => {});
+          videoRef.current.play().catch(() => { });
         }
 
         setCameraActive(true);
@@ -360,7 +390,7 @@ export function RoomLobby({ roomId }) {
           streamRef.current.addTrack(newVideoTrack);
           if (videoRef.current) {
             videoRef.current.srcObject = streamRef.current;
-            videoRef.current.play().catch(() => {});
+            videoRef.current.play().catch(() => { });
           }
           setCameraActive(true);
           setCameraPermission("granted");
@@ -418,7 +448,10 @@ export function RoomLobby({ roomId }) {
         streamRef.current.removeTrack(videoTrack);
       }
       setCameraActive(false);
-      setMediaStream(streamRef.current);
+      const updatedStream = new MediaStream(streamRef.current ? streamRef.current.getTracks() : []);
+      streamRef.current = updatedStream;
+      setMediaStream(updatedStream);
+      sendCameraState(false);
     } else {
       try {
         const videoStream = await navigator.mediaDevices.getUserMedia({
@@ -436,12 +469,15 @@ export function RoomLobby({ roomId }) {
           streamRef.current.addTrack(newVideoTrack);
           if (videoRef.current) {
             videoRef.current.srcObject = streamRef.current;
-            videoRef.current.play().catch(() => {});
+            videoRef.current.play().catch(() => { });
           }
           setCameraActive(true);
           setCameraPermission("granted");
           setCameraError(null);
-          setMediaStream(streamRef.current);
+          const updatedStream = new MediaStream(streamRef.current.getTracks());
+          streamRef.current = updatedStream;
+          setMediaStream(updatedStream);
+          sendCameraState(true);
         }
       } catch (err) {
         console.error("Gagal menyalakan kamera:", err);
@@ -521,12 +557,22 @@ export function RoomLobby({ roomId }) {
   // Auto-start camera & mic preview
   useEffect(() => {
     startMedia();
+
+    const handleBeforeUnload = () => {
+      leaveRoom();
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
     return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
       }
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current.close().catch(() => { });
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -553,6 +599,41 @@ export function RoomLobby({ roomId }) {
     setSessionState("designing");
   };
 
+  // SPESIFIKASI: Tampilan Layar Blokir jika Ruangan Penuh (Maksimal 2 Orang)
+  if (isRoomFull) {
+    return (
+      <div className="min-h-screen bg-[#FAF9F5] text-ink flex flex-col items-center justify-center p-6 selection:bg-fun-yellow/30 selection:text-ink">
+        <div className="max-w-md w-full bg-white rounded-3xl border border-[#E6DFD5] p-8 sm:p-10 shadow-sm flex flex-col items-center gap-5 text-center animate-in fade-in zoom-in-95 duration-200">
+          <div className="size-16 rounded-full bg-[#E76F51]/10 text-[#E76F51] flex items-center justify-center border border-[#E76F51]/20">
+            <Users className="size-8 stroke-[2.2]" />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <h2 className="text-xl sm:text-2xl font-black text-[#1F1A16] tracking-tight">
+              Ruangan Sedang Digunakan
+            </h2>
+            <p className="text-sm text-[#757068] leading-relaxed">
+              Ruangan ini sudah mencapai batas maksimal 2 orang. Silakan buat ruangan baru.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (streamRef.current) {
+                streamRef.current.getTracks().forEach((track) => track.stop());
+              }
+              router.push("/");
+            }}
+            className="mt-2 w-full rounded-full bg-fun-yellow hover:bg-[#D98A12] text-[#1F1A16] font-extrabold py-3.5 px-6 text-sm transition-all shadow-xs cursor-pointer active:scale-95 hover:shadow-md"
+          >
+            Buat Ruangan Baru
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans selection:bg-fun-yellow/30 selection:text-ink animate-in fade-in duration-300">
       {/* 1. Header: Clean & Quiet */}
@@ -560,7 +641,15 @@ export function RoomLobby({ roomId }) {
         roomId={roomId}
         copied={copied}
         onCopy={handleCopy}
-        onExit={() => router.push("/")}
+        onExit={() => {
+          leaveRoom();
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+          }
+          router.push("/");
+        }}
+        role={role}
+        isConnected={Boolean(remoteStream)}
       />
 
       {/* 2. Main Studio Stage */}
@@ -601,22 +690,20 @@ export function RoomLobby({ roomId }) {
               <button
                 type="button"
                 onClick={() => setStudioMode("solo")}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                  studioMode === "solo"
-                    ? "bg-[#1F1A16] text-white shadow-xs"
-                    : "text-[#757068] hover:text-ink"
-                }`}
+                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${studioMode === "solo"
+                  ? "bg-[#1F1A16] text-white shadow-xs"
+                  : "text-[#757068] hover:text-ink"
+                  }`}
               >
                 Studio Solo
               </button>
               <button
                 type="button"
                 onClick={() => setStudioMode("duo")}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                  studioMode === "duo"
-                    ? "bg-[#1F1A16] text-white shadow-xs"
-                    : "text-[#757068] hover:text-ink"
-                }`}
+                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${studioMode === "duo"
+                  ? "bg-[#1F1A16] text-white shadow-xs"
+                  : "text-[#757068] hover:text-ink"
+                  }`}
               >
                 Bilik Berdua
               </button>
@@ -625,14 +712,13 @@ export function RoomLobby({ roomId }) {
 
           {/* Viewfinder Screens: Container konsisten agar LocalVideoStage tidak unmount */}
           <div
-            className={`grid gap-4 sm:gap-6 items-stretch ${
-              studioMode === "solo"
-                ? "grid-cols-1 max-w-2xl mx-auto w-full"
-                : "grid-cols-1 md:grid-cols-2 w-full"
-            }`}
+            className={`grid gap-4 sm:gap-6 items-stretch ${studioMode === "solo"
+              ? "grid-cols-1 max-w-2xl mx-auto w-full"
+              : "grid-cols-1 md:grid-cols-2 w-full"
+              }`}
           >
             <LocalVideoStage
-              videoRef={videoRef}
+              videoRef={localVideoRef}
               stream={mediaStream}
               cameraActive={cameraActive}
               isLoadingCamera={isLoadingCamera}
@@ -659,11 +745,14 @@ export function RoomLobby({ roomId }) {
 
             {studioMode === "duo" && (
               <PeerVideoStage
-                isPeerJoined={isPeerJoined}
-                onShareWhatsApp={handleShareWhatsApp}
-                onCopyLink={handleCopy}
-                copied={copied}
-                onToggleTestPeer={() => setIsPeerJoined((prev) => !prev)}
+                remoteVideoRef={remoteVideoRef}
+                remoteStream={remoteStream}
+                isPeerReady={isPeerReady}
+                isPeerCameraActive={isPeerCameraActive}
+                role={role}
+                roomId={roomId}
+                roomUrl={roomUrl}
+                onPeerLeave={handlePeerLeave}
               />
             )}
           </div>
@@ -671,14 +760,38 @@ export function RoomLobby({ roomId }) {
           {/* Pengaturan Pra-Foto: Tetap aktif dan dapat diakses di kedua mode (Solo & Berdua) */}
           <PreShootControls
             selectedLayout={engine.selectedLayout}
-            onSelectLayout={engine.setSelectedLayout}
+            onSelectLayout={(layout) => {
+              engine.setSelectedLayout(layout);
+              if (isHost) {
+                syncSettings(layout, engine.timerDuration);
+              }
+            }}
             timerDuration={engine.timerDuration}
-            onSelectTimer={engine.setTimerDuration}
+            onSelectTimer={(timer) => {
+              engine.setTimerDuration(timer);
+              if (isHost) {
+                syncSettings(engine.selectedLayout, timer);
+              }
+            }}
             isMirrored={engine.isMirrored}
             onToggleMirror={toggleMirror}
-            onStartSession={engine.startSession}
+            onStartSession={() => {
+              if (studioMode === "duo" && isHost && remoteStream) {
+                triggerRemoteStartSession();
+              }
+              engine.startSession();
+            }}
             cameraActive={cameraActive}
             isLoadingCamera={isLoadingCamera}
+            isDuoMode={studioMode === "duo"}
+            isHost={isHost}
+            isGuest={isGuest}
+            isPeerJoined={Boolean(remoteStream)}
+            isPeerReady={isPeerReady}
+            isLocalReady={isLocalReady}
+            isPeerCameraActive={isPeerCameraActive}
+            remoteStream={remoteStream}
+            onToggleReady={toggleReady}
           />
         </div>
       </main>

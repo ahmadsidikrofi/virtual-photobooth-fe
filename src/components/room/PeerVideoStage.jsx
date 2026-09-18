@@ -1,75 +1,199 @@
 "use client";
 
-import { Heart, MessageCircle, Copy, Check, RotateCcw } from "lucide-react";
+import { useRef, useEffect, useState } from "react";
+import { MessageCircle, Copy, Check, Hourglass, CameraOff } from "lucide-react";
+import { useRoomStore } from "@/stores/useRoomStore";
 
 export function PeerVideoStage({
-  isPeerJoined,
-  onShareWhatsApp,
-  onCopyLink,
-  copied,
-  onToggleTestPeer,
+  videoRef: propVideoRef,
+  remoteVideoRef,
+  remoteStream,
+  isPeerReady,
+  isPeerCameraActive = true,
+  role,
+  roomId,
+  roomUrl: propRoomUrl,
+  onPeerLeave,
 }) {
-  return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-3xl bg-[#F5F0E8] border-2 border-dashed border-[#E6DFD5] flex items-center justify-center text-ink p-6 text-center">
-      {!isPeerJoined ? (
-        <div className="flex flex-col items-center gap-3 max-w-xs">
-          <div className="flex size-12 items-center justify-center rounded-full bg-white shadow-xs">
-            <Heart className="size-5 text-[#E76F51] fill-[#E76F51]" />
+  const internalVideoRef = useRef(null);
+  const videoRef = remoteVideoRef || propVideoRef || internalVideoRef;
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const roomUrl =
+    propRoomUrl ||
+    (typeof window !== "undefined"
+      ? `${window.location.origin}/room/${roomId}`
+      : `http://localhost:3000/room/${roomId}`);
+
+  // Pantau jika seluruh track remoteStream benar-benar berakhir (misal teman keluar/menutup tab)
+  useEffect(() => {
+    if (!remoteStream) {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      return;
+    }
+
+    const checkTrackEnded = () => {
+      const tracks = remoteStream.getTracks();
+      const allEnded = tracks.length > 0 && tracks.every((t) => t.readyState === "ended");
+      // Hanya pemicu leave jika SEMUA track (termasuk audio) sudah ended (artinya teman benar-benar keluar)
+      if (allEnded) {
+        if (onPeerLeave) {
+          onPeerLeave();
+        } else {
+          useRoomStore.getState().setRemoteStream(null);
+          useRoomStore.getState().setIsPeerJoined(false);
+          useRoomStore.getState().setIsPeerReady(false);
+          if (role === "host") {
+            useRoomStore.getState().setActiveGuestId(null);
+          }
+        }
+      }
+    };
+
+    const tracks = remoteStream.getTracks();
+    tracks.forEach((track) => {
+      track.addEventListener("ended", checkTrackEnded);
+    });
+
+    return () => {
+      tracks.forEach((track) => {
+        track.removeEventListener("ended", checkTrackEnded);
+      });
+    };
+  }, [remoteStream, role, onPeerLeave, videoRef]);
+
+  // Pasang stream video remote nyata ke elemen <video>
+  useEffect(() => {
+    if (videoRef.current) {
+      if (remoteStream) {
+        if (videoRef.current.srcObject !== remoteStream) {
+          videoRef.current.srcObject = remoteStream;
+        }
+        if (isPeerCameraActive) {
+          videoRef.current.play().catch((err) => {
+            console.warn("Autoplay remote video terhambat user interaction:", err);
+          });
+        }
+      } else {
+        videoRef.current.srcObject = null;
+      }
+    }
+  }, [remoteStream, isPeerCameraActive, videoRef]);
+
+  const handleCopyLink = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(roomUrl);
+      setToastMessage("Tautan ruangan berhasil disalin");
+      setTimeout(() => {
+        setToastMessage(null);
+      }, 2500);
+    }
+  };
+
+  const handleShareWhatsApp = () => {
+    const text = encodeURIComponent(
+      `Yuk masuk ke bilik foto Snapmate bareng aku! Klik tautan ini:\n${roomUrl}`
+    );
+    window.open(`https://api.whatsapp.com/send?text=${text}`, "_blank");
+  };
+
+  // KONDISI 1: Belum ada tamu nyata atau teman telah meninggalkan ruangan
+  if (!remoteStream) {
+    return (
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-3xl bg-[#FAF9F5] border-2 border-dashed border-[#E6DFD5] flex flex-col items-center justify-center text-ink p-5 sm:p-6 text-center shadow-xs">
+        {/* Floating Toast Notification saat link disalin */}
+        {toastMessage && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 rounded-full bg-[#1F1A16] px-4 py-2 text-xs font-bold text-white shadow-lg animate-in fade-in slide-in-from-top-3 duration-200">
+            <Check className="size-3.5 text-emerald-400 stroke-[3]" />
+            <span className="">{toastMessage}</span>
           </div>
+        )}
+
+        <div className="flex flex-col items-center gap-3 max-w-sm w-full">
+          <div className="flex size-13 items-center justify-center rounded-full bg-[#F5F0E8] border border-[#E6DFD5] shadow-xs">
+            <Hourglass className="size-6 text-[#757068]" />
+          </div>
+
           <div>
-            <h4 className="text-sm font-bold text-ink">Menunggu Pasangan</h4>
+            <h4 className="text-sm sm:text-base font-bold text-ink">
+              Menunggu Teman/Pasangan Bergabung...
+            </h4>
             <p className="mt-1 text-xs text-[#757068] leading-relaxed">
-              Bagikan tautan ini ke doi atau teman agar bisa langsung foto berdua.
+              Bilik ini khusus berdua. Bagikan tautan ruangan di bawah agar temanmu bisa langsung masuk dan foto bareng secara real-time.
             </p>
           </div>
 
-          {/* Quick Share Buttons */}
-          <div className="mt-2 flex flex-col sm:flex-row items-center gap-2 w-full">
+          {/* Tombol Aksi Bagikan */}
+          <div className="mt-1 flex flex-col sm:flex-row items-center gap-2 w-full">
             <button
-              onClick={onShareWhatsApp}
-              className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-[#25D366] text-white px-3.5 py-2 text-xs font-bold hover:bg-[#1EBE5D] transition-colors cursor-pointer active:scale-95"
+              type="button"
+              onClick={handleCopyLink}
+              className="w-full flex items-center justify-center gap-1.5 rounded-full bg-[#1F1A16] hover:bg-[#3D3A35] text-white px-4 py-2 text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              <Copy className="size-3.5" />
+              <span>Salin Tautan Ruangan</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleShareWhatsApp}
+              className="w-full sm:w-auto flex items-center justify-center gap-1.5 rounded-full bg-[#25D366] hover:bg-[#1EBE5D] text-white px-4 py-2 text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
             >
               <MessageCircle className="size-3.5 fill-white" />
               <span>WhatsApp</span>
             </button>
-            <button
-              onClick={onCopyLink}
-              className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-[#E6DFD5] bg-white px-3.5 py-2 text-xs font-bold text-ink hover:bg-[#FAF9F5] transition-colors cursor-pointer active:scale-95"
-            >
-              {copied ? (
-                <>
-                  <Check className="size-3.5 text-emerald-600" />
-                  <span>Tersalin!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="size-3.5 text-[#757068]" />
-                  <span>Salin Link</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
-      ) : (
-        /* Connected State */
-        <div className="flex flex-col items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex size-16 items-center justify-center rounded-xl bg-emerald-100 text-3xl">
-            👋
+      </div>
+    );
+  }
+
+  // KONDISI 2: Tamu Nyata Terhubung di Ruangan (Stream Aktif)
+  return (
+    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-3xl bg-[#1A1917] border-2 border-[#E6DFD5] flex items-center justify-center text-ink shadow-sm">
+      {/* Video Element (Tampil live hanya saat kamera teman aktif) */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className={`size-full object-cover transition-opacity duration-300 ${
+          isPeerCameraActive ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      />
+
+      {/* Tampilan Google Meet style saat kamera teman dimatikan */}
+      {!isPeerCameraActive && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#1A1917] p-6 text-center text-white animate-in fade-in duration-200">
+          <div className="flex size-16 sm:size-20 items-center justify-center rounded-full bg-[#2A2723] border border-white/10 shadow-md">
+            <CameraOff className="size-8 sm:size-9 text-[#D1C9BE]" />
           </div>
-          <h4 className="text-sm font-bold text-ink">Teman Sudah Bergabung!</h4>
-          <span className="text-xs text-emerald-700 font-medium">Siap foto berdua</span>
+          <h4 className="mt-4 text-sm sm:text-base font-bold text-[#FAF9F5]">
+            Kamera Teman Dimatikan
+          </h4>
+          <p className="mt-1.5 text-xs text-[#9C968C] max-w-xs leading-relaxed">
+            Temanmu sedang menonaktifkan kamera sementara. Suara mikrofon tetap terhubung.
+          </p>
         </div>
       )}
 
-      {/* Small subtle tester toggle */}
-      <button
-        onClick={onToggleTestPeer}
-        className="absolute top-3 right-3 flex items-center gap-1 text-[10px] font-semibold text-[#757068] hover:text-ink bg-white/70 rounded-full px-2 py-0.5 border border-[#E6DFD5] transition-colors cursor-pointer"
-        title="Uji simulasi teman terhubung"
-      >
-        <RotateCcw className="size-2.5" />
-        <span>{isPeerJoined ? "Reset" : "Tes Berdua"}</span>
-      </button>
+      {/* Top Overlays */}
+      <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
+        <div className="flex items-center gap-1.5 rounded-full bg-black/50 backdrop-blur-md px-3 py-1 text-xs font-semibold text-white shadow-xs">
+          <span className="size-2 rounded-full bg-[#38A89D] animate-pulse" />
+          <span>{role === "host" ? "Teman" : "Teman (Host)"}</span>
+        </div>
+
+        <div
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold shadow-xs transition-colors ${
+            isPeerReady
+              ? "bg-emerald-500 text-white"
+              : "bg-black/50 backdrop-blur-md text-white/80"
+          }`}
+        >
+          <span>{isPeerReady ? "✓ Siap Foto" : "Belum siap"}</span>
+        </div>
+      </div>
     </div>
   );
 }

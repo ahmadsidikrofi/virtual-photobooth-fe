@@ -51,8 +51,8 @@ export function PhotoCuratingScreen({
         </div>
       </div>
 
-      {/* 2. Photo Gallery Grid (8 Photos Buffer, 4 kolom rapi) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+      {/* 2. Photo Gallery Grid (6 Photos Buffer, 3 kolom rapi) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         {capturedPhotos.map((photoUrl, idx) => {
           const isSelected = selectedIndices.includes(idx);
           const selectionOrder = isSelected ? selectedIndices.indexOf(idx) + 1 : null;

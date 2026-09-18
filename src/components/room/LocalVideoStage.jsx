@@ -35,6 +35,7 @@ export function LocalVideoStage({
   countdownValue: propCountdownValue,
   currentShot: propCurrentShot,
   transitionText: propTransitionText,
+  totalShots = 8,
 }) {
   const storeSessionState = usePhotoboothStore((s) => s.sessionState);
   const storeCountdownValue = usePhotoboothStore((s) => s.countdownValue);
@@ -68,9 +69,8 @@ export function LocalVideoStage({
         playsInline
         muted
         style={{ transform: isMirrored ? "scaleX(-1)" : "none" }}
-        className={`size-full object-cover transition-transform duration-300 ${
-          cameraActive ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+        className={`size-full object-cover transition-transform duration-300 ${cameraActive ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
       />
 
       {/* Mesin Jepret Countdown (in top corner), Flash, and Transition Overlay */}
@@ -79,6 +79,7 @@ export function LocalVideoStage({
         countdownValue={countdownValue}
         currentShot={currentShot}
         transitionText={transitionText}
+        totalShots={totalShots}
       />
 
       {/* Overlay saat Kamera Mati / Sedang Loading / Error / Diblokir */}
@@ -154,13 +155,12 @@ export function LocalVideoStage({
                     ? "Matikan efek cermin (tampilan normal)"
                     : "Aktifkan efek cermin"
               }
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold backdrop-blur-md border transition-all ${
-                isCapturingSession
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold backdrop-blur-md border transition-all ${isCapturingSession
                   ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
                   : isMirrored
                     ? "bg-fun-yellow border-fun-yellow text-ink shadow-xs cursor-pointer"
                     : "bg-black/60 border-white/20 text-white/80 hover:text-white cursor-pointer"
-              }`}
+                }`}
             >
               <FlipHorizontal className="size-3.5" />
               <span>{isMirrored ? "Cermin" : "Normal"}</span>
@@ -180,13 +180,12 @@ export function LocalVideoStage({
                         ? "Matikan Mikrofon"
                         : "Nyalakan Mikrofon"
                 }
-                className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                  !micActive || !isMicAvailable || micPermission === "denied"
+                className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all cursor-pointer ${!micActive || !isMicAvailable || micPermission === "denied"
                     ? "bg-[#E53E3E] border-[#E53E3E] text-white"
                     : isSpeaking
                       ? "bg-black/80 border-emerald-400 text-emerald-400 ring-2 ring-emerald-400/80"
                       : "bg-black/60 border-white/20 text-white hover:bg-black/80"
-                }`}
+                  }`}
               >
                 {micActive && isMicAvailable && micPermission !== "denied" ? (
                   <Mic className="size-3.5" />
@@ -208,13 +207,12 @@ export function LocalVideoStage({
                         ? "Matikan Kamera"
                         : "Nyalakan Kamera"
                 }
-                className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${
-                  isCapturingSession
+                className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${isCapturingSession
                     ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
                     : cameraActive && cameraPermission !== "denied"
                       ? "bg-black/60 border-white/20 text-white hover:bg-black/80 cursor-pointer"
                       : "bg-[#E53E3E] border-[#E53E3E] text-white cursor-pointer"
-                }`}
+                  }`}
               >
                 {cameraActive && cameraPermission !== "denied" ? (
                   <Camera className="size-3.5" />

@@ -87,7 +87,7 @@ export const usePhotoboothStore = create((set, get) => ({
   countdownValue: 3,
   currentShot: 1,
   transitionText: null,
-  capturedPhotos: [], // 8-shot universal buffer
+  capturedPhotos: [], // 6-shot universal buffer
 
   setSessionState: (sessionState) => set({ sessionState }),
   setCountdownValue: (countdownValue) => set({ countdownValue }),

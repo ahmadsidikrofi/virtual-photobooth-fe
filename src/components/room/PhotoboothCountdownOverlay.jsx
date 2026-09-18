@@ -5,6 +5,7 @@ export function PhotoboothCountdownOverlay({
   countdownValue,
   currentShot,
   transitionText,
+  totalShots = 6,
 }) {
   const isCountdown = sessionState === "countdown";
   const isFlash = sessionState === "flash";
@@ -33,9 +34,9 @@ export function PhotoboothCountdownOverlay({
       {/* 3. Live Countdown: Discretely placed in top-right corner so it NEVER covers user's face */}
       {isCountdown && (
         <div className="absolute top-4 right-4 z-20 pointer-events-none flex items-center gap-2 animate-in fade-in duration-150">
-          {/* Shot Number Indicator (8 universal buffer shots) */}
+          {/* Shot Number Indicator (6 universal buffer shots) */}
           <div className="rounded-full bg-black/70 px-3 py-1 text-[11px] font-semibold text-white/90 border border-white/10 backdrop-blur-xs">
-            Pose {currentShot}/8
+            Pose {currentShot}/{totalShots}
           </div>
 
           {/* Countdown Number (Sleek corner badge) */}

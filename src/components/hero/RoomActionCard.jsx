@@ -20,6 +20,12 @@ export function RoomActionCard({ onRoomCreated }) {
   // Generate Google Meet-style room code (e.g. "ere-nfuw-tqp") and redirect smoothly
   const handleCreateInstantRoom = () => {
     const newRoomId = generateRoomId();
+    if (typeof window !== "undefined") {
+      try {
+        const cleanId = newRoomId.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        sessionStorage.setItem(`snapmate_host_${cleanId}`, "true");
+      } catch {}
+    }
     setIsTransitioning(true);
     if (onRoomCreated) {
       onRoomCreated(newRoomId);
