@@ -10,6 +10,7 @@ import { PreShootControls } from "./PreShootControls";
 import { PhotoCuratingScreen } from "./PhotoCuratingScreen";
 import { StripDesignScreen } from "./StripDesignScreen";
 import { MediaPermissionDialog } from "./MediaPermissionDialog";
+import { DeviceSettingsModal } from "./DeviceSettingsModal";
 import { usePhotoboothEngine } from "@/hooks/usePhotoboothEngine";
 import { usePeerRoom } from "@/hooks/usePeerRoom";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
@@ -50,6 +51,15 @@ export function RoomLobby({ roomId }) {
   const [micPermission, setMicPermission] = useState("prompt");
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [permissionDialogMode, setPermissionDialogMode] = useState("camera");
+
+  // Device Selection & Hardware Enumeration State
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
+  const [facingMode, setFacingMode] = useState("user"); // "user" | "environment"
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSwitchingDevice, setIsSwitchingDevice] = useState(false);
 
   // 1. Photobooth Engine Hook (Hardware Capture Loop & Countdown Audio)
   const engine = usePhotoboothEngine({
@@ -152,6 +162,29 @@ export function RoomLobby({ roomId }) {
     }
   }, []);
 
+  // Enumerasi daftar perangkat kamera dan mikrofon yang terhubung
+  const updateDeviceList = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const vDevices = devices.filter((d) => d.kind === "videoinput");
+      const aDevices = devices.filter((d) => d.kind === "audioinput");
+      setVideoDevices(vDevices);
+      setAudioDevices(aDevices);
+    } catch (err) {
+      console.warn("Gagal mengenumerasi perangkat media:", err);
+    }
+  }, []);
+
+  // Pantau perubahan perangkat (misal colok/cabut webcam USB)
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.addEventListener) return;
+    navigator.mediaDevices.addEventListener("devicechange", updateDeviceList);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", updateDeviceList);
+    };
+  }, [updateDeviceList]);
+
   // Attach active stream to video element
   const attachStreamToVideo = useCallback((stream) => {
     if (videoRef.current && stream) {
@@ -162,7 +195,7 @@ export function RoomLobby({ roomId }) {
         console.warn("Autoplay was prevented or pending user interaction:", err);
       });
     }
-  }, []);
+  }, [videoRef]);
 
   const startMedia = async () => {
     setIsLoadingCamera(true);
@@ -197,13 +230,23 @@ export function RoomLobby({ roomId }) {
       setCameraPermission("granted");
       setCameraError(null);
 
+      const vTrack = fullStream.getVideoTracks()[0];
+      if (vTrack) {
+        const settings = vTrack.getSettings();
+        if (settings.deviceId) setSelectedVideoDeviceId(settings.deviceId);
+        if (settings.facingMode) setFacingMode(settings.facingMode);
+      }
+
       const audioTrack = fullStream.getAudioTracks()[0];
       if (audioTrack) {
+        const settings = audioTrack.getSettings();
+        if (settings.deviceId) setSelectedAudioDeviceId(settings.deviceId);
         audioTrack.enabled = micActive;
         setupAudioMeter(audioTrack);
         setIsMicAvailable(true);
         setMicPermission("granted");
       }
+      updateDeviceList();
     } catch (fullErr) {
       console.warn("Permintaan gabungan kamera & mic gagal, mencoba terpisah:", fullErr);
 
@@ -220,6 +263,14 @@ export function RoomLobby({ roomId }) {
         setCameraActive(true);
         setCameraPermission("granted");
         setCameraError(null);
+
+        const vTrack = videoStream.getVideoTracks()[0];
+        if (vTrack) {
+          const settings = vTrack.getSettings();
+          if (settings.deviceId) setSelectedVideoDeviceId(settings.deviceId);
+          if (settings.facingMode) setFacingMode(settings.facingMode);
+        }
+        updateDeviceList();
       } catch (err) {
         console.error("Gagal mengakses kamera:", err);
         setCameraActive(false);
@@ -250,6 +301,10 @@ export function RoomLobby({ roomId }) {
           setupAudioMeter(audioTrack);
           setIsMicAvailable(true);
           setMicPermission("granted");
+
+          const settings = audioTrack.getSettings();
+          if (settings.deviceId) setSelectedAudioDeviceId(settings.deviceId);
+          updateDeviceList();
         }
       } catch (err) {
         console.warn("Gagal mengakses mikrofon:", err);
@@ -554,6 +609,160 @@ export function RoomLobby({ roomId }) {
     engine.toggleMirror();
   };
 
+  // Fungsi Pergantian Perangkat Kamera & Mikrofon
+  const switchMediaDevice = async ({
+    videoDeviceId,
+    audioDeviceId,
+    targetFacingMode,
+  }) => {
+    setIsSwitchingDevice(true);
+    setCameraError(null);
+
+    const targetVideoId = videoDeviceId !== undefined ? videoDeviceId : selectedVideoDeviceId;
+    const targetAudioId = audioDeviceId !== undefined ? audioDeviceId : selectedAudioDeviceId;
+    const nextFacing = targetFacingMode !== undefined ? targetFacingMode : facingMode;
+
+    const videoConstraints = {
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+    };
+
+    if (targetFacingMode !== undefined && !videoDeviceId) {
+      videoConstraints.facingMode = { ideal: targetFacingMode };
+    } else if (targetVideoId) {
+      videoConstraints.deviceId = { exact: targetVideoId };
+    } else if (nextFacing) {
+      videoConstraints.facingMode = { ideal: nextFacing };
+    }
+
+    const audioConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+
+    if (targetAudioId) {
+      audioConstraints.deviceId = { exact: targetAudioId };
+    }
+
+    try {
+      let newStream;
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: cameraActive || videoDeviceId !== undefined || targetFacingMode !== undefined ? videoConstraints : false,
+          audio: isMicAvailable || micActive || audioDeviceId !== undefined ? audioConstraints : false,
+        });
+      } catch (exactErr) {
+        console.warn("Exact device constraint failed, attempting fallback:", exactErr);
+        const fallbackVideo = { ...videoConstraints };
+        if (fallbackVideo.deviceId) {
+          fallbackVideo.deviceId = targetVideoId;
+        }
+        const fallbackAudio = { ...audioConstraints };
+        if (fallbackAudio.deviceId) {
+          fallbackAudio.deviceId = targetAudioId;
+        }
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: cameraActive || videoDeviceId !== undefined || targetFacingMode !== undefined ? fallbackVideo : false,
+          audio: isMicAvailable || micActive || audioDeviceId !== undefined ? fallbackAudio : false,
+        });
+      }
+
+      // Hentikan track lama untuk mencegah memory leak dan mematikan lampu webcam lama
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      streamRef.current = newStream;
+      setMediaStream(newStream);
+
+      if (localVideoRef.current && newStream.getVideoTracks().length > 0) {
+        attachStreamToVideo(newStream);
+      }
+
+      setCameraActive(newStream.getVideoTracks().length > 0);
+      setCameraPermission("granted");
+
+      const newAudioTrack = newStream.getAudioTracks()[0];
+      if (newAudioTrack) {
+        newAudioTrack.enabled = micActive;
+        setupAudioMeter(newAudioTrack);
+        setIsMicAvailable(true);
+        setMicPermission("granted");
+      }
+
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (newVideoTrack) {
+        const settings = newVideoTrack.getSettings();
+        if (settings.deviceId) setSelectedVideoDeviceId(settings.deviceId);
+        const activeFacing = settings.facingMode || targetFacingMode || nextFacing;
+        setFacingMode(activeFacing);
+
+        // Aturan Cermin:
+        // Jika kamera belakang (environment), otomatis matikan efek cermin.
+        // Jika kamera depan (user), otomatis aktifkan efek cermin.
+        const isRear =
+          activeFacing === "environment" ||
+          (newVideoTrack.label && /back|rear|belakang|environment/i.test(newVideoTrack.label));
+        const isFront =
+          activeFacing === "user" ||
+          (newVideoTrack.label && /front|depan|user/i.test(newVideoTrack.label));
+
+        if (isRear) {
+          engine.setIsMirrored(false);
+        } else if (isFront) {
+          engine.setIsMirrored(true);
+        }
+      }
+
+      if (newAudioTrack) {
+        const settings = newAudioTrack.getSettings();
+        if (settings.deviceId) setSelectedAudioDeviceId(settings.deviceId);
+      }
+
+      updateDeviceList();
+      return true;
+    } catch (err) {
+      console.error("Gagal mengganti perangkat media:", err);
+      setCameraError("Gagal menghubungkan ke perangkat yang dipilih.");
+      return false;
+    } finally {
+      setIsSwitchingDevice(false);
+    }
+  };
+
+  // Tombol Cepat Balik Kamera di Ponsel (Mobile Quick Flip)
+  const handleQuickFlipCamera = async () => {
+    const nextFacing = facingMode === "user" ? "environment" : "user";
+
+    let targetDeviceId = undefined;
+    if (videoDevices.length > 1) {
+      if (nextFacing === "environment") {
+        const backCam = videoDevices.find((d) =>
+          /back|rear|belakang|environment/i.test(d.label)
+        );
+        if (backCam) targetDeviceId = backCam.deviceId;
+      } else {
+        const frontCam = videoDevices.find((d) =>
+          /front|depan|user/i.test(d.label)
+        );
+        if (frontCam) targetDeviceId = frontCam.deviceId;
+      }
+
+      if (!targetDeviceId && selectedVideoDeviceId) {
+        const otherCam = videoDevices.find(
+          (d) => d.deviceId !== selectedVideoDeviceId
+        );
+        if (otherCam) targetDeviceId = otherCam.deviceId;
+      }
+    }
+
+    await switchMediaDevice({
+      videoDeviceId: targetDeviceId,
+      targetFacingMode: nextFacing,
+    });
+  };
+
   // Auto-start camera & mic preview
   useEffect(() => {
     startMedia();
@@ -659,6 +868,8 @@ export function RoomLobby({ roomId }) {
           <StripDesignScreen
             roomId={roomId}
             studioMode={studioMode}
+            isHost={isHost}
+            isGuest={isGuest}
             onBackToCurate={() => setSessionState("curating")}
             onRetake={() => engine.resetSession()}
           />
@@ -737,6 +948,9 @@ export function RoomLobby({ roomId }) {
                 setIsPermissionDialogOpen(true);
               }}
               onStartMedia={startMedia}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onQuickFlipCamera={handleQuickFlipCamera}
+              facingMode={facingMode}
               sessionState={engine.sessionState}
               countdownValue={engine.countdownValue}
               currentShot={engine.currentShot}
@@ -773,8 +987,6 @@ export function RoomLobby({ roomId }) {
                 syncSettings(engine.selectedLayout, timer);
               }
             }}
-            isMirrored={engine.isMirrored}
-            onToggleMirror={toggleMirror}
             onStartSession={() => {
               if (studioMode === "duo" && isHost && remoteStream) {
                 triggerRemoteStartSession();
@@ -804,6 +1016,27 @@ export function RoomLobby({ roomId }) {
         cameraPermission={cameraPermission}
         micPermission={micPermission}
         onRetry={handleRetryPermission}
+      />
+
+      {/* Modal Dialog Pemilihan Perangkat Kamera & Audio */}
+      <DeviceSettingsModal
+        isOpen={isSettingsOpen}
+        onOpenChange={setIsSettingsOpen}
+        videoDevices={videoDevices}
+        audioDevices={audioDevices}
+        selectedVideoDeviceId={selectedVideoDeviceId}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        onSelectVideoDevice={(deviceId) =>
+          switchMediaDevice({ videoDeviceId: deviceId })
+        }
+        onSelectAudioDevice={(deviceId) =>
+          switchMediaDevice({ audioDeviceId: deviceId })
+        }
+        isMirrored={engine.isMirrored}
+        onToggleMirror={toggleMirror}
+        onQuickFlipCamera={handleQuickFlipCamera}
+        facingMode={facingMode}
+        isSwitchingDevice={isSwitchingDevice}
       />
     </div>
   );

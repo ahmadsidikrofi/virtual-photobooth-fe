@@ -157,9 +157,8 @@ export function PeerVideoStage({
         ref={videoRef}
         autoPlay
         playsInline
-        className={`size-full object-cover transition-opacity duration-300 ${
-          isPeerCameraActive ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+        className={`size-full object-cover transition-opacity duration-300 ${isPeerCameraActive ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
       />
 
       {/* Tampilan Google Meet style saat kamera teman dimatikan */}
@@ -177,23 +176,6 @@ export function PeerVideoStage({
         </div>
       )}
 
-      {/* Top Overlays */}
-      <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
-        <div className="flex items-center gap-1.5 rounded-full bg-black/50 backdrop-blur-md px-3 py-1 text-xs font-semibold text-white shadow-xs">
-          <span className="size-2 rounded-full bg-[#38A89D] animate-pulse" />
-          <span>{role === "host" ? "Teman" : "Teman (Host)"}</span>
-        </div>
-
-        <div
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold shadow-xs transition-colors ${
-            isPeerReady
-              ? "bg-emerald-500 text-white"
-              : "bg-black/50 backdrop-blur-md text-white/80"
-          }`}
-        >
-          <span>{isPeerReady ? "✓ Siap Foto" : "Belum siap"}</span>
-        </div>
-      </div>
     </div>
   );
 }

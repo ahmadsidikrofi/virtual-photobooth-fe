@@ -6,7 +6,8 @@ import {
   CameraOff,
   Mic,
   MicOff,
-  FlipHorizontal,
+  SwitchCamera,
+  Settings,
   Loader2,
   Lock,
 } from "lucide-react";
@@ -30,6 +31,9 @@ export function LocalVideoStage({
   onCameraClick,
   onOpenPermissionDialog,
   onStartMedia,
+  onOpenSettings,
+  onQuickFlipCamera,
+  facingMode = "user",
   // Engine overlay props (optional with Zustand store fallback)
   sessionState: propSessionState,
   countdownValue: propCountdownValue,
@@ -137,37 +141,42 @@ export function LocalVideoStage({
         </div>
       </div>
 
+      {/* Tombol Balik Kamera Cepat di Ponsel / Kamera Depan-Belakang */}
+      {cameraActive && !(sessionState === "countdown" || sessionState === "flash") && onQuickFlipCamera && (
+        <button
+          type="button"
+          onClick={onQuickFlipCamera}
+          title={`Balik Kamera (${facingMode === "user" ? "Beralih ke Kamera Belakang" : "Beralih ke Kamera Depan"})`}
+          className="absolute top-3 right-3 z-10 flex size-8.5 items-center justify-center rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white hover:bg-black/80 hover:scale-105 active:scale-95 transition-all shadow-sm cursor-pointer"
+        >
+          <SwitchCamera className="size-4 stroke-[2.2]" />
+        </button>
+      )}
+
       {/* Kontrol Media Dasar (Bawah) */}
       {(() => {
         const isCapturingSession = sessionState === "countdown" || sessionState === "flash";
 
         return (
-          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-auto z-10">
-            {/* Tombol Flip Cermin */}
-            <button
-              type="button"
-              disabled={isCapturingSession}
-              onClick={isCapturingSession ? undefined : onToggleMirror}
-              title={
-                isCapturingSession
-                  ? "Pengaturan cermin dikunci saat sesi foto berlangsung"
-                  : isMirrored
-                    ? "Matikan efek cermin (tampilan normal)"
-                    : "Aktifkan efek cermin"
-              }
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold backdrop-blur-md border transition-all ${isCapturingSession
-                  ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
-                  : isMirrored
-                    ? "bg-fun-yellow border-fun-yellow text-ink shadow-xs cursor-pointer"
-                    : "bg-black/60 border-white/20 text-white/80 hover:text-white cursor-pointer"
-                }`}
-            >
-              <FlipHorizontal className="size-3.5" />
-              <span>{isMirrored ? "Cermin" : "Normal"}</span>
-            </button>
+          <div className="absolute bottom-3 right-3 flex items-center gap-2 pointer-events-auto z-10">
+            {/* Tombol Kontrol Perangkat (Settings, Mic & Kamera) */}
+              {/* Tombol Pengaturan Perangkat (Settings Gear) */}
+              {onOpenSettings && (
+                <button
+                  type="button"
+                  disabled={isCapturingSession}
+                  onClick={isCapturingSession ? undefined : onOpenSettings}
+                  title="Pengaturan Perangkat Kamera & Mikrofon"
+                  className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${
+                    isCapturingSession
+                      ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
+                      : "bg-black/60 border-white/20 text-white hover:bg-black/80 hover:scale-105 cursor-pointer active:scale-95"
+                  }`}
+                >
+                  <Settings className="size-3.5" />
+                </button>
+              )}
 
-            {/* Tombol Kontrol Mic & Kamera */}
-            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onMicClick}
@@ -220,7 +229,6 @@ export function LocalVideoStage({
                   <CameraOff className="size-3.5" />
                 )}
               </button>
-            </div>
           </div>
         );
       })()}

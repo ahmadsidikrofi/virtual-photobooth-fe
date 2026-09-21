@@ -29,12 +29,12 @@ export function LobbyHeader({
               {role === "host" ? "👑 Host" : "🤝 Guest"}
             </span>
           )}
-          {isConnected && (
+          {/* {isConnected && (
             <span
               className="size-2 rounded-full bg-[#38A89D] animate-pulse"
               title="WebRTC P2P Terkoneksi"
             />
-          )}
+          )} */}
           <span className="font-mono font-bold text-ink">{roomId}</span>
           <button
             type="button"

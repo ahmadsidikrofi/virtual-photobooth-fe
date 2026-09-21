@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  FlipHorizontal,
   ChevronDown,
   Check,
   GalleryVertical,
@@ -31,8 +30,6 @@ export function PreShootControls({
   onSelectLayout,
   timerDuration: propTimerDuration,
   onSelectTimer,
-  isMirrored: propIsMirrored,
-  onToggleMirror,
   onStartSession,
   cameraActive,
   isLoadingCamera,
@@ -48,17 +45,13 @@ export function PreShootControls({
 }) {
   const storeLayout = usePhotoboothStore((s) => s.selectedLayout);
   const storeTimer = usePhotoboothStore((s) => s.timerDuration);
-  const storeMirrored = usePhotoboothStore((s) => s.isMirrored);
   const storeSetLayout = usePhotoboothStore((s) => s.setSelectedLayout);
   const storeSetTimer = usePhotoboothStore((s) => s.setTimerDuration);
-  const storeToggleMirror = usePhotoboothStore((s) => s.toggleMirror);
 
   const selectedLayout = propSelectedLayout ?? storeLayout;
   const timerDuration = propTimerDuration ?? storeTimer;
-  const isMirrored = propIsMirrored ?? storeMirrored;
   const handleSelectLayout = onSelectLayout ?? storeSetLayout;
   const handleSelectTimer = onSelectTimer ?? storeSetTimer;
-  const handleToggleMirror = onToggleMirror ?? storeToggleMirror;
 
   const currentConfig = GRID_CONFIGS[selectedLayout] || GRID_CONFIGS.strip_1x4;
 
@@ -75,8 +68,8 @@ export function PreShootControls({
             <DropdownMenuTrigger
               disabled={isDuoMode && isGuest}
               className={`w-full flex items-center justify-between gap-3 rounded-xl border border-[#E6DFD5] bg-[#FAF9F5] px-3.5 py-2 text-xs font-semibold text-ink transition-colors ${isDuoMode && isGuest
-                  ? "opacity-80 cursor-default"
-                  : "hover:bg-[#F5F0E8] hover:border-[#D1C9BE] focus:outline-none focus:ring-2 focus:ring-fun-yellow/60 cursor-pointer"
+                ? "opacity-80 cursor-default"
+                : "hover:bg-[#F5F0E8] hover:border-[#D1C9BE] focus:outline-none focus:ring-2 focus:ring-fun-yellow/60 cursor-pointer"
                 }`}
             >
               <div className="flex items-center gap-2 truncate">
@@ -112,8 +105,8 @@ export function PreShootControls({
                         key={item.id}
                         onClick={() => handleSelectLayout(item.id)}
                         className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs cursor-pointer transition-colors outline-none ${isSelected
-                            ? "bg-[#EFE9DE] text-ink font-bold"
-                            : "text-[#3D3A35] hover:bg-[#F5F0E8] hover:text-ink font-medium"
+                          ? "bg-[#EFE9DE] text-ink font-bold"
+                          : "text-[#3D3A35] hover:bg-[#F5F0E8] hover:text-ink font-medium"
                           }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -121,7 +114,7 @@ export function PreShootControls({
                             item.id,
                             item.type,
                             `size-4 shrink-0 transition-colors ${isSelected ? "text-ink" : "text-[#757068]"
-                              }`
+                            }`
                           )}
                           <span className="truncate">{item.name}</span>
                         </div>
@@ -165,24 +158,6 @@ export function PreShootControls({
             ))}
           </div>
         </div>
-
-        {/* 3. Mirror Toggle Button */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-bold text-[#757068]">
-            Cermin Kamera
-          </label>
-          <button
-            type="button"
-            onClick={handleToggleMirror}
-            className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${isMirrored
-              ? "bg-fun-yellow/20 border-fun-yellow text-ink font-extrabold"
-              : "bg-[#FAF9F5] border-[#E6DFD5] text-[#757068] hover:text-ink"
-              }`}
-          >
-            <FlipHorizontal className="size-3.5" />
-            <span>{isMirrored ? "Aktif" : "Mati"}</span>
-          </button>
-        </div>
       </div>
 
       {/* 4. Tombol Utama CTA (Mulai Sesi Foto / Status Siap) */}
@@ -195,16 +170,16 @@ export function PreShootControls({
               onClick={onToggleReady}
               disabled={!cameraActive || isLoadingCamera}
               className={`w-full md:w-auto flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-extrabold transition-all shadow-sm active:scale-95 ${!cameraActive || isLoadingCamera
-                  ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
-                  : isLocalReady
-                    ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
-                    : "bg-fun-yellow hover:bg-[#D98A12] text-ink cursor-pointer"
+                ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
+                : isLocalReady
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                  : "bg-fun-yellow hover:bg-[#D98A12] text-ink cursor-pointer"
                 }`}
             >
               {isLocalReady ? (
                 <>
                   <Check className="size-4 stroke-[3]" />
-                  <span>Saya Sudah Siap!</span>
+                  <span>Saya Sudah Siap</span>
                 </>
               ) : (
                 <span>Tandai Saya Siap Foto</span>
@@ -223,13 +198,13 @@ export function PreShootControls({
               disabled={
                 !cameraActive ||
                 isLoadingCamera ||
-                (isDuoMode && (!remoteStream || !isPeerCameraActive))
+                (isDuoMode && (!remoteStream || !isPeerCameraActive || !isPeerReady))
               }
               className={`w-full md:w-auto flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-extrabold transition-all shadow-sm active:scale-95 ${!cameraActive ||
-                  isLoadingCamera ||
-                  (isDuoMode && (!remoteStream || !isPeerCameraActive))
-                  ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
-                  : "bg-fun-yellow hover:bg-[#D98A12] text-ink cursor-pointer hover:shadow-md"
+                isLoadingCamera ||
+                (isDuoMode && (!remoteStream || !isPeerCameraActive || !isPeerReady))
+                ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
+                : "bg-fun-yellow hover:bg-[#D98A12] text-ink cursor-pointer hover:shadow-md"
                 }`}
             >
               <span>
@@ -245,7 +220,7 @@ export function PreShootControls({
                   : !isPeerCameraActive
                     ? "Menunggu teman menyalakan kamera untuk mulai berdua..."
                     : isPeerReady
-                      ? "✓ Teman sudah siap! Klik untuk mulai berdua."
+                      ? "✓ Teman sudah siap, jangan bikin dia menunggu"
                       : "Teman sudah terhubung (menunggu teman siap)"}
               </span>
             )}
