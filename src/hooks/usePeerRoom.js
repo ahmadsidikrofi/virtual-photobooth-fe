@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
-export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
+export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerDisconnect }) {
   // Zustand Room Store selectors
   const role = useRoomStore((s) => s.role);
   const activeGuestId = useRoomStore((s) => s.activeGuestId);
@@ -25,6 +25,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
   const setRemoteStream = useRoomStore((s) => s.setRemoteStream);
   const setPeerConnectionStatus = useRoomStore((s) => s.setPeerConnectionStatus);
   const setIsPeerCameraActive = useRoomStore((s) => s.setIsPeerCameraActive);
+  const setHasPeerDisconnected = useRoomStore((s) => s.setHasPeerDisconnected);
   const resetPeerState = useRoomStore((s) => s.resetPeerState);
 
   // Photobooth Store selectors
@@ -42,6 +43,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
   const activeGuestIdRef = useRef(activeGuestId);
   const isLocalReadyRef = useRef(isLocalReady);
   const onRemoteStartSessionRef = useRef(onRemoteStartSession);
+  const onPeerDisconnectRef = useRef(onPeerDisconnect);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -62,6 +64,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
   useEffect(() => {
     onRemoteStartSessionRef.current = onRemoteStartSession;
   }, [onRemoteStartSession]);
+
+  useEffect(() => {
+    onPeerDisconnectRef.current = onPeerDisconnect;
+  }, [onPeerDisconnect]);
 
   // Send data safely via DataConnection
   const sendData = useCallback((payload) => {
@@ -85,6 +91,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
     setIsPeerJoined(false);
     setIsPeerReady(false);
     setIsPeerCameraActive(true);
+    setHasPeerDisconnected(true);
     setPeerConnectionStatus(roleRef.current === "host" ? "connected" : "disconnected");
 
     if (callRef.current) {
@@ -99,7 +106,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
       } catch {}
       connRef.current = null;
     }
-  }, [setRemoteStream, setIsPeerJoined, setIsPeerReady, setIsPeerCameraActive, setPeerConnectionStatus, setActiveGuestId]);
+
+    if (onPeerDisconnectRef.current) {
+      onPeerDisconnectRef.current();
+    }
+  }, [setRemoteStream, setIsPeerJoined, setIsPeerReady, setIsPeerCameraActive, setHasPeerDisconnected, setPeerConnectionStatus, setActiveGuestId]);
 
   // Setup MediaCall handlers (MURNI stream remote, bukan tiruan)
   const setupMediaCall = useCallback(
@@ -110,6 +121,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
         // Stream asli dari browser pasangan
         setRemoteStream(incomingStream);
         setIsPeerJoined(true);
+        setHasPeerDisconnected(false);
         setPeerConnectionStatus("connected");
 
         // Dengarkan jika track video/audio remote berakhir
@@ -176,6 +188,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession }) {
 
       conn.on("open", () => {
         setIsPeerJoined(true);
+        setHasPeerDisconnected(false);
         setPeerConnectionStatus("connected");
 
         const hasActiveVideo = Boolean(

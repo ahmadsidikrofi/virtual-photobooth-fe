@@ -142,7 +142,7 @@ export function LocalVideoStage({
       </div>
 
       {/* Tombol Balik Kamera Cepat di Ponsel / Kamera Depan-Belakang */}
-      {cameraActive && !(sessionState === "countdown" || sessionState === "flash") && onQuickFlipCamera && (
+      {cameraActive && !(sessionState === "countdown" || sessionState === "flash" || sessionState === "transition") && onQuickFlipCamera && (
         <button
           type="button"
           onClick={onQuickFlipCamera}
@@ -155,7 +155,10 @@ export function LocalVideoStage({
 
       {/* Kontrol Media Dasar (Bawah) */}
       {(() => {
-        const isCapturingSession = sessionState === "countdown" || sessionState === "flash";
+        const isCapturingSession =
+          sessionState === "countdown" ||
+          sessionState === "flash" ||
+          sessionState === "transition";
 
         return (
           <div className="absolute bottom-3 right-3 flex items-center gap-2 pointer-events-auto z-10">

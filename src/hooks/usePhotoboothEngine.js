@@ -159,6 +159,21 @@ export function usePhotoboothEngine({
     return () => clearAllTimers();
   }, [clearAllTimers]);
 
+  // Hentikan sesi foto dan reset dari awal jika partner terdiskoneksi saat sesi foto berlangsung di bilik berdua
+  useEffect(() => {
+    const hasActiveSession =
+      sessionState === "countdown" ||
+      sessionState === "flash" ||
+      sessionState === "transition" ||
+      sessionState === "curating" ||
+      sessionState === "designing";
+
+    if (role && !remoteStream && hasActiveSession) {
+      clearAllTimers();
+      storeResetSession();
+    }
+  }, [role, remoteStream, sessionState, clearAllTimers, storeResetSession]);
+
   // Capture current video frame(s) to temporary high-res canvas (Solo or Duo Side-by-Side)
   const captureFrame = useCallback(() => {
     const localVideo = localVideoRef?.current;
@@ -267,7 +282,7 @@ export function usePhotoboothEngine({
             if (shotNumber < totalShots) {
               const nextShot = shotNumber + 1;
               setCurrentShot(nextShot);
-              setSessionState("idle");
+              setSessionState("transition");
               setTransitionText(`Pose ke-${nextShot} bersiap!`);
 
               // 2-second transition pause before next countdown

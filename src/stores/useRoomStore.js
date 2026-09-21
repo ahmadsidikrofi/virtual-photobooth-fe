@@ -15,6 +15,7 @@ export const useRoomStore = create((set) => ({
   isLocalReady: false,
   isPeerCameraActive: true, // boolean (status kamera aktif dari pasangan)
   remoteStream: null, // MediaStream | null (Murni null jika belum ada yang bergabung nyata)
+  hasPeerDisconnected: false, // boolean (true jika pasangan pernah terhubung lalu putus)
 
   setStudioMode: (studioMode) => set({ studioMode }),
   setCopied: (copied) => set({ copied }),
@@ -28,6 +29,7 @@ export const useRoomStore = create((set) => ({
   setIsPeerCameraActive: (isPeerCameraActive) => set({ isPeerCameraActive }),
   toggleLocalReady: () => set((state) => ({ isLocalReady: !state.isLocalReady })),
   setRemoteStream: (remoteStream) => set({ remoteStream }),
+  setHasPeerDisconnected: (hasPeerDisconnected) => set({ hasPeerDisconnected }),
   resetPeerState: () =>
     set({
       role: null,
@@ -39,5 +41,6 @@ export const useRoomStore = create((set) => ({
       isLocalReady: false,
       isPeerCameraActive: true,
       remoteStream: null,
+      hasPeerDisconnected: false,
     }),
 }));

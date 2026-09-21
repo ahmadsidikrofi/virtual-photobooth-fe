@@ -47,11 +47,17 @@ export function PreShootControls({
   const storeTimer = usePhotoboothStore((s) => s.timerDuration);
   const storeSetLayout = usePhotoboothStore((s) => s.setSelectedLayout);
   const storeSetTimer = usePhotoboothStore((s) => s.setTimerDuration);
+  const sessionState = usePhotoboothStore((s) => s.sessionState);
 
   const selectedLayout = propSelectedLayout ?? storeLayout;
   const timerDuration = propTimerDuration ?? storeTimer;
   const handleSelectLayout = onSelectLayout ?? storeSetLayout;
   const handleSelectTimer = onSelectTimer ?? storeSetTimer;
+
+  const isSessionActive =
+    sessionState === "countdown" ||
+    sessionState === "flash" ||
+    sessionState === "transition";
 
   const currentConfig = GRID_CONFIGS[selectedLayout] || GRID_CONFIGS.strip_1x4;
 
@@ -66,8 +72,8 @@ export function PreShootControls({
           </span>
           <DropdownMenu>
             <DropdownMenuTrigger
-              disabled={isDuoMode && isGuest}
-              className={`w-full flex items-center justify-between gap-3 rounded-xl border border-[#E6DFD5] bg-[#FAF9F5] px-3.5 py-2 text-xs font-semibold text-ink transition-colors ${isDuoMode && isGuest
+              disabled={(isDuoMode && isGuest) || isSessionActive}
+              className={`w-full flex items-center justify-between gap-3 rounded-xl border border-[#E6DFD5] bg-[#FAF9F5] px-3.5 py-2 text-xs font-semibold text-ink transition-colors ${(isDuoMode && isGuest) || isSessionActive
                 ? "opacity-80 cursor-default"
                 : "hover:bg-[#F5F0E8] hover:border-[#D1C9BE] focus:outline-none focus:ring-2 focus:ring-fun-yellow/60 cursor-pointer"
                 }`}
@@ -86,7 +92,7 @@ export function PreShootControls({
               </div>
             </DropdownMenuTrigger>
 
-            {!isGuest && (
+            {!isGuest && !isSessionActive && (
               <DropdownMenuContent
                 align="start"
                 sideOffset={6}
@@ -145,9 +151,9 @@ export function PreShootControls({
               <button
                 key={sec}
                 type="button"
-                disabled={isDuoMode && isGuest}
+                disabled={(isDuoMode && isGuest) || isSessionActive}
                 onClick={() => handleSelectTimer(sec)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${isDuoMode && isGuest ? "cursor-default" : "cursor-pointer"
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${(isDuoMode && isGuest) || isSessionActive ? "cursor-default opacity-60" : "cursor-pointer"
                   } ${timerDuration === sec
                     ? "bg-[#1F1A16] text-white shadow-xs"
                     : "text-[#757068] hover:text-ink"
@@ -168,8 +174,8 @@ export function PreShootControls({
             <button
               type="button"
               onClick={onToggleReady}
-              disabled={!cameraActive || isLoadingCamera}
-              className={`w-full md:w-auto flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-extrabold transition-all shadow-sm active:scale-95 ${!cameraActive || isLoadingCamera
+              disabled={!cameraActive || isLoadingCamera || isSessionActive}
+              className={`w-full md:w-auto flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-extrabold transition-all shadow-sm active:scale-95 ${!cameraActive || isLoadingCamera || isSessionActive
                 ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
                 : isLocalReady
                   ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
@@ -186,7 +192,9 @@ export function PreShootControls({
               )}
             </button>
             <span className="text-[11px] font-medium text-[#757068]">
-              Menunggu Host memulai jepretan foto...
+              {isSessionActive
+                ? "Sesi foto sedang berlangsung..."
+                : "Menunggu Host memulai jepretan foto..."}
             </span>
           </div>
         ) : (
@@ -198,30 +206,36 @@ export function PreShootControls({
               disabled={
                 !cameraActive ||
                 isLoadingCamera ||
+                isSessionActive ||
                 (isDuoMode && (!remoteStream || !isPeerCameraActive || !isPeerReady))
               }
               className={`w-full md:w-auto flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-extrabold transition-all shadow-sm active:scale-95 ${!cameraActive ||
                 isLoadingCamera ||
+                isSessionActive ||
                 (isDuoMode && (!remoteStream || !isPeerCameraActive || !isPeerReady))
                 ? "bg-[#F5E4C4] text-[#9C968C] cursor-not-allowed opacity-60"
                 : "bg-fun-yellow hover:bg-[#D98A12] text-ink cursor-pointer hover:shadow-md"
                 }`}
             >
               <span>
-                {isDuoMode
-                  ? "Mulai Sesi Foto Berdua"
-                  : "Mulai Sesi Foto (8 Jepretan)"}
+                {isSessionActive
+                  ? "Sesi Foto Sedang Berlangsung..."
+                  : isDuoMode
+                    ? "Mulai Sesi Foto Berdua"
+                    : "Mulai Sesi Foto (8 Jepretan)"}
               </span>
             </button>
             {isDuoMode && (
               <span className="text-[11px] font-medium text-[#757068]">
-                {!remoteStream
-                  ? "Menunggu teman bergabung via tautan untuk mulai berdua..."
-                  : !isPeerCameraActive
-                    ? "Menunggu teman menyalakan kamera untuk mulai berdua..."
-                    : isPeerReady
-                      ? "✓ Teman sudah siap, jangan bikin dia menunggu"
-                      : "Teman sudah terhubung (menunggu teman siap)"}
+                {isSessionActive
+                  ? "Sesi foto sedang berlangsung..."
+                  : !remoteStream
+                    ? "Menunggu teman bergabung via tautan untuk mulai berdua..."
+                    : !isPeerCameraActive
+                      ? "Menunggu teman menyalakan kamera untuk mulai berdua..."
+                      : isPeerReady
+                        ? "✓ Teman sudah siap, jangan bikin dia menunggu"
+                        : "Teman sudah terhubung (menunggu teman siap)"}
               </span>
             )}
           </div>

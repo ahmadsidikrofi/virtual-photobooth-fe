@@ -31,6 +31,7 @@ export function RoomLobby({ roomId }) {
   const setStudioMode = useRoomStore((s) => s.setStudioMode);
   const copied = useRoomStore((s) => s.copied);
   const setCopied = useRoomStore((s) => s.setCopied);
+  const hasPeerDisconnected = useRoomStore((s) => s.hasPeerDisconnected);
 
   // Global Photobooth Session Store (Zustand)
   const sessionState = usePhotoboothStore((s) => s.sessionState);
@@ -90,6 +91,11 @@ export function RoomLobby({ roomId }) {
     localStream: mediaStream,
     onRemoteStartSession: () => {
       engine.startSession();
+    },
+    onPeerDisconnect: () => {
+      // Sesi foto dihentikan dan reset dari awal saat pasangan terputus
+      engine.resetSession();
+      useRoomStore.getState().setIsLocalReady(false);
     },
   });
 
@@ -963,6 +969,7 @@ export function RoomLobby({ roomId }) {
                 remoteStream={remoteStream}
                 isPeerReady={isPeerReady}
                 isPeerCameraActive={isPeerCameraActive}
+                hasPeerDisconnected={hasPeerDisconnected}
                 role={role}
                 roomId={roomId}
                 roomUrl={roomUrl}

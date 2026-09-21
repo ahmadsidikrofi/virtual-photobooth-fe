@@ -83,7 +83,7 @@ export const usePhotoboothStore = create((set, get) => ({
   // =========================================================================
   // 2. ENGINE & CAPTURE SESSION
   // =========================================================================
-  sessionState: "idle", // "idle" | "countdown" | "flash" | "curating" | "designing"
+  sessionState: "idle", // "idle" | "countdown" | "flash" | "transition" | "curating" | "designing"
   countdownValue: 3,
   currentShot: 1,
   transitionText: null,
