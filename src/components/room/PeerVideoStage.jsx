@@ -23,6 +23,7 @@ export function PeerVideoStage({
 
   const storeHasPeerDisconnected = useRoomStore((s) => s.hasPeerDisconnected);
   const hasPeerDisconnected = propHasPeerDisconnected ?? storeHasPeerDisconnected;
+  const peerConnectionStatus = useRoomStore((s) => s.peerConnectionStatus);
 
   const roomUrl =
     propRoomUrl ||
@@ -30,45 +31,12 @@ export function PeerVideoStage({
       ? `${window.location.origin}/room/${roomId}`
       : `http://localhost:3000/room/${roomId}`);
 
-  // Pantau jika seluruh track remoteStream benar-benar berakhir (misal teman keluar/menutup tab)
+  // Bersihkan elemen video jika remoteStream bernilai null
   useEffect(() => {
-    if (!remoteStream) {
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      return;
+    if (!remoteStream && videoRef.current) {
+      videoRef.current.srcObject = null;
     }
-
-    const checkTrackEnded = () => {
-      const tracks = remoteStream.getTracks();
-      const allEnded = tracks.length > 0 && tracks.every((t) => t.readyState === "ended");
-      // Hanya pemicu leave jika SEMUA track (termasuk audio) sudah ended (artinya teman benar-benar keluar)
-      if (allEnded) {
-        if (onPeerLeave) {
-          onPeerLeave();
-        } else {
-          useRoomStore.getState().setRemoteStream(null);
-          useRoomStore.getState().setIsPeerJoined(false);
-          useRoomStore.getState().setIsPeerReady(false);
-          useRoomStore.getState().setHasPeerDisconnected(true);
-          if (role === "host") {
-            useRoomStore.getState().setActiveGuestId(null);
-          }
-        }
-      }
-    };
-
-    const tracks = remoteStream.getTracks();
-    tracks.forEach((track) => {
-      track.addEventListener("ended", checkTrackEnded);
-    });
-
-    return () => {
-      tracks.forEach((track) => {
-        track.removeEventListener("ended", checkTrackEnded);
-      });
-    };
-  }, [remoteStream, role, onPeerLeave, videoRef]);
+  }, [remoteStream, videoRef]);
 
   // Pasang stream video remote nyata ke elemen <video>
   useEffect(() => {
@@ -210,6 +178,14 @@ export function PeerVideoStage({
           {role === "guest" ? "Host" : "Guest"}
         </div>
       </div>
+
+      {/* Indikator Menghubungkan Kembali saat jitter jaringan sesaat */}
+      {peerConnectionStatus === "reconnecting" && (
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-2 rounded-full bg-amber-500/90 backdrop-blur-md px-3 py-1 text-xs font-semibold text-white shadow-md border border-white/20 animate-in fade-in duration-200">
+          <span className="size-2 rounded-full bg-white animate-ping" />
+          <span>Menghubungkan kembali...</span>
+        </div>
+      )}
 
       {/* Video Element (Tampil live hanya saat kamera teman aktif) */}
       <video

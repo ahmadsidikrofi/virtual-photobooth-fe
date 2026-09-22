@@ -9,7 +9,7 @@ export const useRoomStore = create((set) => ({
   role: null, // "host" | "guest" | null
   activeGuestId: null, // string | null (hanya di sisi host untuk membatasi 1 guest)
   isRoomFull: false, // boolean (jika guest ketiga ditolak)
-  peerConnectionStatus: "disconnected", // "disconnected" | "connecting" | "connected" | "failed"
+  peerConnectionStatus: "disconnected", // "disconnected" | "connecting" | "connected" | "reconnecting" | "failed"
   isPeerJoined: false, // true HANYA jika tamu aktif terhubung
   isPeerReady: false,
   isLocalReady: false,

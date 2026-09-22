@@ -4,6 +4,23 @@ import { useEffect, useRef, useCallback } from "react";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
+// Konfigurasi WebRTC STUN multi-server untuk kehandalan NAT traversal di berbagai ISP
+const PEER_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" },
+    { urls: "stun:openrelay.metered.ca:80" },
+  ],
+  iceCandidatePoolSize: 10,
+};
+
+// Toleransi waktu gangguan jaringan sesaat (buffer toleransi) sebelum menyatakan koneksi putus permanen
+const DISCONNECT_GRACE_PERIOD_MS = 6500;
+
 export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerDisconnect }) {
   // Zustand Room Store selectors
   const role = useRoomStore((s) => s.role);
@@ -44,6 +61,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
   const isLocalReadyRef = useRef(isLocalReady);
   const onRemoteStartSessionRef = useRef(onRemoteStartSession);
   const onPeerDisconnectRef = useRef(onPeerDisconnect);
+  const disconnectTimerRef = useRef(null);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -80,9 +98,14 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     }
   }, []);
 
-  // Helper sentral saat teman meninggalkan ruangan / koneksi terputus
+  // Helper sentral saat teman meninggalkan ruangan / koneksi terputus permanen
   const handlePeerDisconnect = useCallback(() => {
-    console.log("[PeerJS] Pasangan meninggalkan ruangan / terputus.");
+    console.log("[PeerJS] Pasangan meninggalkan ruangan / terputus permanen.");
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+
     if (roleRef.current === "host") {
       activeGuestIdRef.current = null;
       setActiveGuestId(null);
@@ -112,6 +135,33 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     }
   }, [setRemoteStream, setIsPeerJoined, setIsPeerReady, setIsPeerCameraActive, setHasPeerDisconnected, setPeerConnectionStatus, setActiveGuestId]);
 
+  // Bersihkan buffer grace period saat koneksi pulih normal
+  const clearDisconnectGracePeriod = useCallback(() => {
+    if (disconnectTimerRef.current) {
+      console.log("[PeerJS] Koneksi stabil kembali, membatalkan grace period.");
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+    setPeerConnectionStatus("connected");
+  }, [setPeerConnectionStatus]);
+
+  // Mulai buffer toleransi saat terjadi jitter jaringan sementara
+  const startDisconnectGracePeriod = useCallback(
+    (reason = "Koneksi tidak stabil") => {
+      console.warn(`[PeerJS] Indikasi gangguan koneksi (${reason}). Memulai grace period ${DISCONNECT_GRACE_PERIOD_MS}ms...`);
+      setPeerConnectionStatus("reconnecting");
+
+      if (!disconnectTimerRef.current) {
+        disconnectTimerRef.current = setTimeout(() => {
+          console.error(`[PeerJS] Grace period (${DISCONNECT_GRACE_PERIOD_MS}ms) habis tanpa pemulihan. Menghentikan sesi.`);
+          disconnectTimerRef.current = null;
+          handlePeerDisconnect();
+        }, DISCONNECT_GRACE_PERIOD_MS);
+      }
+    },
+    [handlePeerDisconnect, setPeerConnectionStatus]
+  );
+
   // Setup MediaCall handlers (MURNI stream remote, bukan tiruan)
   const setupMediaCall = useCallback(
     (call) => {
@@ -122,10 +172,17 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         setRemoteStream(incomingStream);
         setIsPeerJoined(true);
         setHasPeerDisconnected(false);
-        setPeerConnectionStatus("connected");
+        clearDisconnectGracePeriod();
 
-        // Dengarkan jika track video/audio remote berakhir
+        // Dengarkan status track video/audio remote
         incomingStream.getTracks().forEach((track) => {
+          track.onmute = () => {
+            console.log("[PeerJS] Remote track muted (packet drop / network pause):", track.kind);
+          };
+          track.onunmute = () => {
+            console.log("[PeerJS] Remote track unmuted (packet resumed):", track.kind);
+            clearDisconnectGracePeriod();
+          };
           track.onended = () => {
             console.log("[PeerJS] Remote track berakhir (onended):", track.kind);
             // Jangan putuskan ruangan jika DataConnection masih aktif terbuka
@@ -135,50 +192,85 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               }
               return;
             }
-            const allTracksEnded = incomingStream.getTracks().every((t) => t.readyState === "ended");
-            if (allTracksEnded) {
-              handlePeerDisconnect();
-            }
+            startDisconnectGracePeriod("Semua track berakhir tanpa DataConnection aktif");
           };
         });
       });
 
       call.on("close", () => {
+        console.log("[PeerJS] MediaCall ditutup.");
+        // Jika DataConnection masih terbuka, jangan bunuh room seketika!
+        if (connRef.current && connRef.current.open) {
+          startDisconnectGracePeriod("MediaCall closed namun DataConnection masih open");
+          // Jika kita adalah guest, coba re-call host
+          if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current && localStreamRef.current) {
+            try {
+              console.log("[PeerJS] Tamu mencoba memanggil ulang MediaCall ke Host...");
+              const newCall = peerRef.current.call(hostIdRef.current, localStreamRef.current);
+              if (newCall) setupMediaCallRef.current(newCall);
+            } catch (err) {
+              console.warn("[PeerJS] Gagal re-call:", err);
+            }
+          }
+          return;
+        }
         handlePeerDisconnect();
       });
 
       call.on("error", (err) => {
         console.warn("[PeerJS] MediaCall error:", err);
-        handlePeerDisconnect();
+        startDisconnectGracePeriod("MediaCall error");
       });
 
-      // Pantau RTCPeerConnection langsung untuk deteksi putus seketika
+      // Pantau RTCPeerConnection untuk pemulihan dan buffer jitter
       const pc = call.peerConnection;
       if (pc) {
         pc.onconnectionstatechange = () => {
-          console.log("[PeerJS] RTCPeerConnection state:", pc.connectionState);
-          if (
-            pc.connectionState === "disconnected" ||
-            pc.connectionState === "failed" ||
-            pc.connectionState === "closed"
-          ) {
-            handlePeerDisconnect();
+          console.log("[PeerJS MediaCall] RTCPeerConnection state:", pc.connectionState);
+          if (pc.connectionState === "connected") {
+            clearDisconnectGracePeriod();
+          } else if (pc.connectionState === "disconnected") {
+            startDisconnectGracePeriod("MediaCall connectionState disconnected");
+          } else if (pc.connectionState === "failed") {
+            try {
+              if (typeof pc.restartIce === "function") {
+                pc.restartIce();
+              }
+            } catch {}
+            startDisconnectGracePeriod("MediaCall connectionState failed");
+          } else if (pc.connectionState === "closed") {
+            if (!connRef.current || !connRef.current.open) {
+              handlePeerDisconnect();
+            }
           }
         };
 
         pc.oniceconnectionstatechange = () => {
-          console.log("[PeerJS] ICE connectionState:", pc.iceConnectionState);
-          if (
-            pc.iceConnectionState === "disconnected" ||
-            pc.iceConnectionState === "failed" ||
-            pc.iceConnectionState === "closed"
-          ) {
-            handlePeerDisconnect();
+          console.log("[PeerJS MediaCall] ICE connectionState:", pc.iceConnectionState);
+          if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+            clearDisconnectGracePeriod();
+          } else if (pc.iceConnectionState === "disconnected") {
+            startDisconnectGracePeriod("MediaCall ICE disconnected");
+          } else if (pc.iceConnectionState === "failed") {
+            try {
+              if (typeof pc.restartIce === "function") {
+                pc.restartIce();
+              }
+            } catch {}
+            startDisconnectGracePeriod("MediaCall ICE failed");
           }
         };
       }
     },
-    [setRemoteStream, setIsPeerJoined, setPeerConnectionStatus, handlePeerDisconnect, setHasPeerDisconnected, setIsPeerCameraActive]
+    [
+      setRemoteStream,
+      setIsPeerJoined,
+      clearDisconnectGracePeriod,
+      startDisconnectGracePeriod,
+      handlePeerDisconnect,
+      setHasPeerDisconnected,
+      setIsPeerCameraActive,
+    ]
   );
 
   // Setup DataConnection handlers
@@ -189,7 +281,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       conn.on("open", () => {
         setIsPeerJoined(true);
         setHasPeerDisconnected(false);
-        setPeerConnectionStatus("connected");
+        clearDisconnectGracePeriod();
 
         const hasActiveVideo = Boolean(
           localStreamRef.current?.getVideoTracks().some((t) => t.enabled)
@@ -240,7 +332,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         switch (data.type) {
           case "GUEST_JOINED":
             setIsPeerJoined(true);
-            setPeerConnectionStatus("connected");
+            clearDisconnectGracePeriod();
             if (typeof data.isReady === "boolean") {
               setIsPeerReady(data.isReady);
             }
@@ -301,23 +393,43 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       });
 
       conn.on("close", () => {
+        console.log("[PeerJS] DataConnection ditutup.");
+        if (callRef.current && callRef.current.open) {
+          startDisconnectGracePeriod("DataConnection closed namun MediaCall masih open");
+          return;
+        }
         handlePeerDisconnect();
       });
 
       conn.on("error", (err) => {
         console.warn("[PeerJS] DataConnection error:", err);
-        handlePeerDisconnect();
+        startDisconnectGracePeriod("DataConnection error");
       });
 
       const pc = conn.peerConnection;
       if (pc) {
         pc.onconnectionstatechange = () => {
-          if (
-            pc.connectionState === "disconnected" ||
-            pc.connectionState === "failed" ||
-            pc.connectionState === "closed"
-          ) {
-            handlePeerDisconnect();
+          console.log("[PeerJS DataConn] RTCPeerConnection state:", pc.connectionState);
+          if (pc.connectionState === "connected") {
+            clearDisconnectGracePeriod();
+          } else if (pc.connectionState === "disconnected") {
+            startDisconnectGracePeriod("DataConn connectionState disconnected");
+          } else if (pc.connectionState === "failed") {
+            startDisconnectGracePeriod("DataConn connectionState failed");
+          } else if (pc.connectionState === "closed") {
+            if (!callRef.current || !callRef.current.open) {
+              handlePeerDisconnect();
+            }
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+            clearDisconnectGracePeriod();
+          } else if (pc.iceConnectionState === "disconnected") {
+            startDisconnectGracePeriod("DataConn ICE disconnected");
+          } else if (pc.iceConnectionState === "failed") {
+            startDisconnectGracePeriod("DataConn ICE failed");
           }
         };
       }
@@ -325,7 +437,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     [
       sendData,
       setIsPeerJoined,
-      setPeerConnectionStatus,
+      clearDisconnectGracePeriod,
+      startDisconnectGracePeriod,
       setIsPeerReady,
       setSelectedLayout,
       setTimerDuration,
@@ -427,6 +540,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
         // LANGKAH 1: Mendaftar sebagai Host dengan ID deterministik
         localPeer = new Peer(targetHostId, {
+          config: PEER_CONFIG,
           debug: 1,
         });
         peerRef.current = localPeer;
@@ -543,7 +657,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             }
 
             // Jika pengguna adalah tamu yang bergabung: gunakan Peer ID acak baru (new Peer())
-            const guestPeer = new Peer(undefined, { debug: 1 });
+            const guestPeer = new Peer(undefined, {
+              config: PEER_CONFIG,
+              debug: 1,
+            });
             peerRef.current = guestPeer;
 
             guestPeer.on("open", () => {
@@ -608,6 +725,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
     return () => {
       isDestroyedRef.current = true;
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
       const peerToDestroy = peerRef.current;
       const callToDestroy = callRef.current;
       const connToDestroy = connRef.current;
@@ -642,6 +763,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
   // Aksi keluar ruangan secara proaktif
   const leaveRoom = useCallback(() => {
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
     sendData({ type: "PEER_LEAVE" });
   }, [sendData]);
 
