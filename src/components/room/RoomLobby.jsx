@@ -404,6 +404,7 @@ export function RoomLobby({ roomId }) {
     }
 
     setIsLoadingCamera(false);
+    sendCameraState(combinedStream.getVideoTracks().length > 0);
   };
 
   // Monitor real-time permission changes
@@ -458,13 +459,19 @@ export function RoomLobby({ roomId }) {
     const needCamera = targetMode === "camera" || targetMode === "both";
     const needMic = targetMode === "mic" || targetMode === "both";
 
+    // Hentikan track lama yang mungkin terkunci agar hardware kamera dilepas
+    if (streamRef.current) {
+      if (needCamera) streamRef.current.getVideoTracks().forEach((t) => t.stop());
+      if (needMic) streamRef.current.getAudioTracks().forEach((t) => t.stop());
+    }
+
     if (needCamera && needMic) {
       try {
         const fullStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            facingMode: "user",
+            facingMode: facingMode || "user",
           },
           audio: {
             echoCancellation: true,
@@ -490,6 +497,7 @@ export function RoomLobby({ roomId }) {
         setCameraPermission("granted");
         setCameraError(null);
         setMediaStream(streamRef.current);
+        sendCameraState(true);
 
         const aTrack = fullStream.getAudioTracks()[0];
         if (aTrack) {
@@ -516,7 +524,7 @@ export function RoomLobby({ roomId }) {
           video: {
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            facingMode: "user",
+            facingMode: facingMode || "user",
           },
         });
         const newVideoTrack = videoStream.getVideoTracks()[0];
@@ -532,6 +540,7 @@ export function RoomLobby({ roomId }) {
           setCameraPermission("granted");
           setCameraError(null);
           setMediaStream(streamRef.current);
+          sendCameraState(true);
         }
       } catch (err) {
         console.warn("Retry camera failed:", err);
@@ -577,50 +586,50 @@ export function RoomLobby({ roomId }) {
   };
 
   const toggleCamera = async () => {
-    if (cameraActive) {
-      const videoTrack = streamRef.current?.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.stop();
-        streamRef.current.removeTrack(videoTrack);
-      }
-      setCameraActive(false);
-      const updatedStream = new MediaStream(streamRef.current ? streamRef.current.getTracks() : []);
-      streamRef.current = updatedStream;
-      setMediaStream(updatedStream);
-      sendCameraState(false);
-    } else {
-      try {
-        const videoStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: "user",
-          },
-        });
-        const newVideoTrack = videoStream.getVideoTracks()[0];
-        if (newVideoTrack) {
-          if (!streamRef.current) {
-            streamRef.current = new MediaStream();
-          }
-          streamRef.current.addTrack(newVideoTrack);
-          if (videoRef.current) {
-            videoRef.current.srcObject = streamRef.current;
-            videoRef.current.play().catch(() => { });
-          }
-          setCameraActive(true);
-          setCameraPermission("granted");
-          setCameraError(null);
-          const updatedStream = new MediaStream(streamRef.current.getTracks());
-          streamRef.current = updatedStream;
-          setMediaStream(updatedStream);
-          sendCameraState(true);
+    const currentVideoTrack = streamRef.current?.getVideoTracks()[0];
+    if (currentVideoTrack) {
+      const nextActive = !cameraActive;
+      currentVideoTrack.enabled = nextActive;
+      setCameraActive(nextActive);
+      sendCameraState(nextActive);
+      return;
+    }
+
+    // Hanya jika belum ada track kamera sama sekali (misal izin ditolak diawal), minta izin baru
+    try {
+      setIsLoadingCamera(true);
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: facingMode || "user",
+        },
+      });
+      const newVideoTrack = videoStream.getVideoTracks()[0];
+      if (newVideoTrack) {
+        if (!streamRef.current) {
+          streamRef.current = new MediaStream();
         }
-      } catch (err) {
-        console.error("Gagal menyalakan kamera:", err);
-        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-          setCameraPermission("denied");
+        streamRef.current.addTrack(newVideoTrack);
+        if (videoRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          videoRef.current.play().catch(() => { });
         }
+        setCameraActive(true);
+        setCameraPermission("granted");
+        setCameraError(null);
+        const updatedStream = new MediaStream(streamRef.current.getTracks());
+        streamRef.current = updatedStream;
+        setMediaStream(updatedStream);
+        sendCameraState(true);
       }
+    } catch (err) {
+      console.error("Gagal menyalakan kamera:", err);
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        setCameraPermission("denied");
+      }
+    } finally {
+      setIsLoadingCamera(false);
     }
   };
 
@@ -711,7 +720,8 @@ export function RoomLobby({ roomId }) {
     if (targetFacingMode !== undefined && !videoDeviceId) {
       videoConstraints.facingMode = { ideal: targetFacingMode };
     } else if (targetVideoId) {
-      videoConstraints.deviceId = { exact: targetVideoId };
+      // Gunakan ideal daripada exact untuk mencegah NotAllowedError / OverconstrainedError pada ponsel
+      videoConstraints.deviceId = { ideal: targetVideoId };
     } else if (nextFacing) {
       videoConstraints.facingMode = { ideal: nextFacing };
     }
@@ -723,10 +733,23 @@ export function RoomLobby({ roomId }) {
     };
 
     if (targetAudioId) {
-      audioConstraints.deviceId = { exact: targetAudioId };
+      audioConstraints.deviceId = { ideal: targetAudioId };
     }
 
     try {
+      // Hentikan video track lama terlebih dahulu sebelum meminta kamera baru,
+      // agar hardware sensor kamera pada ponsel/laptop tidak terkunci (NotReadableError: Could not start video source)
+      if (videoDeviceId !== undefined || targetFacingMode !== undefined) {
+        if (streamRef.current) {
+          streamRef.current.getVideoTracks().forEach((track) => track.stop());
+        }
+      }
+      if (audioDeviceId !== undefined) {
+        if (streamRef.current) {
+          streamRef.current.getAudioTracks().forEach((track) => track.stop());
+        }
+      }
+
       let newStream;
       try {
         newStream = await navigator.mediaDevices.getUserMedia({
@@ -734,14 +757,14 @@ export function RoomLobby({ roomId }) {
           audio: isMicAvailable || micActive || audioDeviceId !== undefined ? audioConstraints : false,
         });
       } catch (exactErr) {
-        console.warn("Exact device constraint failed, attempting fallback:", exactErr);
+        console.warn("Device constraint fallback triggered:", exactErr);
         const fallbackVideo = { ...videoConstraints };
         if (fallbackVideo.deviceId) {
-          fallbackVideo.deviceId = targetVideoId;
+          delete fallbackVideo.deviceId;
         }
         const fallbackAudio = { ...audioConstraints };
         if (fallbackAudio.deviceId) {
-          fallbackAudio.deviceId = targetAudioId;
+          delete fallbackAudio.deviceId;
         }
         newStream = await navigator.mediaDevices.getUserMedia({
           video: cameraActive || videoDeviceId !== undefined || targetFacingMode !== undefined ? fallbackVideo : false,
@@ -749,7 +772,7 @@ export function RoomLobby({ roomId }) {
         });
       }
 
-      // Hentikan track lama untuk mencegah memory leak dan mematikan lampu webcam lama
+      // Hentikan semua sisa track lama untuk memastikan hardware kamera lama mati
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -761,8 +784,10 @@ export function RoomLobby({ roomId }) {
         attachStreamToVideo(newStream);
       }
 
-      setCameraActive(newStream.getVideoTracks().length > 0);
+      const hasVideo = newStream.getVideoTracks().length > 0;
+      setCameraActive(hasVideo);
       setCameraPermission("granted");
+      sendCameraState(hasVideo);
 
       const newAudioTrack = newStream.getAudioTracks()[0];
       if (newAudioTrack) {

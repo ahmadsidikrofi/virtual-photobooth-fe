@@ -31,9 +31,75 @@ const PEER_CONFIG = {
       username: "openrelayproject",
       credential: "openrelayproject",
     },
+    {
+      urls: "turns:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
   ],
   iceCandidatePoolSize: 10,
 };
+
+// Helper: Buat video track fallback (kanvas 640x480) untuk memastikan SDP WebRTC
+// selalu menegosiasikan transceiver video 'sendrecv' dua arah. Dengan demikian,
+// saat kamera lokal dihidupkan, replaceTrack dapat langsung mentransmisikan video
+// tanpa terhambat status 'recvonly' atau penolakan m-line di SDP awal.
+function createEmptyVideoTrack(width = 640, height = 480) {
+  if (typeof document === "undefined") return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#111111";
+      ctx.fillRect(0, 0, width, height);
+    }
+    const stream = canvas.captureStream ? canvas.captureStream(1) : null;
+    const track = stream?.getVideoTracks()[0];
+    if (track) {
+      track.enabled = false;
+      return track;
+    }
+  } catch (e) {
+    console.warn("[PeerJS] Gagal membuat fallback video track:", e);
+  }
+  return null;
+}
+
+// Helper: Buat audio track hening untuk memastikan transceiver audio 'sendrecv' selalu tersedia
+function createEmptyAudioTrack() {
+  if (typeof window === "undefined") return null;
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const dst = ctx.createMediaStreamDestination();
+    osc.connect(dst);
+    osc.start();
+    const track = dst.stream.getAudioTracks()[0];
+    if (track) {
+      track.enabled = false;
+      return track;
+    }
+  } catch (e) {
+    console.warn("[PeerJS] Gagal membuat fallback audio track:", e);
+  }
+  return null;
+}
+
+// Helper: Memastikan stream yang dikirim ke peer selalu memiliki minimal 1 track video dan 1 track audio
+function ensureStreamWithBothTracks(sourceStream) {
+  const tracks = [];
+  const videoTrack = sourceStream?.getVideoTracks()[0] || createEmptyVideoTrack();
+  if (videoTrack) tracks.push(videoTrack);
+
+  const audioTrack = sourceStream?.getAudioTracks()[0] || createEmptyAudioTrack();
+  if (audioTrack) tracks.push(audioTrack);
+
+  return new MediaStream(tracks);
+}
 
 // Toleransi waktu gangguan jaringan sesaat (buffer toleransi) sebelum menyatakan koneksi putus permanen
 const DISCONNECT_GRACE_PERIOD_MS = 6500;
@@ -114,6 +180,17 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       }
     }
   }, []);
+
+  // Aksi siaran: Perubahan status kamera aktif/nonaktif
+  const sendCameraState = useCallback(
+    (enabled) => {
+      sendData({
+        type: "CAMERA_STATE",
+        enabled: Boolean(enabled),
+      });
+    },
+    [sendData]
+  );
 
   // Helper sentral saat teman meninggalkan ruangan / koneksi terputus permanen
   const handlePeerDisconnect = useCallback(() => {
@@ -220,10 +297,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         if (connRef.current && connRef.current.open) {
           startDisconnectGracePeriod("MediaCall closed namun DataConnection masih open");
           // Jika kita adalah guest, coba re-call host
-          if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current && localStreamRef.current) {
+          if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current) {
             try {
               console.log("[PeerJS] Tamu mencoba memanggil ulang MediaCall ke Host...");
-              const newCall = peerRef.current.call(hostIdRef.current, localStreamRef.current);
+              const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+              const newCall = peerRef.current.call(hostIdRef.current, streamToSend);
               if (newCall) setupMediaCallRef.current(newCall);
             } catch (err) {
               console.warn("[PeerJS] Gagal re-call:", err);
@@ -239,9 +317,25 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         startDisconnectGracePeriod("MediaCall error");
       });
 
-      // Pantau RTCPeerConnection untuk pemulihan dan buffer jitter
+      // Pantau RTCPeerConnection untuk pemulihan dan penangkapan track baru
       const pc = call.peerConnection;
       if (pc) {
+        pc.ontrack = (event) => {
+          console.log("[PeerJS MediaCall] Native ontrack received:", event.track.kind, event.track.id);
+          if (event.streams && event.streams[0]) {
+            setRemoteStream(event.streams[0]);
+          } else {
+            const current = useRoomStore.getState().remoteStream;
+            const targetStream = current ? new MediaStream(current.getTracks()) : new MediaStream();
+            if (!targetStream.getTracks().some((t) => t.id === event.track.id)) {
+              targetStream.addTrack(event.track);
+            }
+            setRemoteStream(targetStream);
+          }
+          setIsPeerJoined(true);
+          setHasPeerDisconnected(false);
+          clearDisconnectGracePeriod();
+        };
         pc.onconnectionstatechange = () => {
           console.log("[PeerJS MediaCall] RTCPeerConnection state:", pc.connectionState);
           if (pc.connectionState === "connected") {
@@ -322,10 +416,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           });
 
           // Setelah DataConnection stabil dan terbuka, panggil Host membawa stream video lokal jika belum dipanggil
-          if (roleRef.current === "guest" && peerRef.current && !callRef.current && localStreamRef.current && hostIdRef.current) {
+          if (roleRef.current === "guest" && peerRef.current && !callRef.current && hostIdRef.current) {
             try {
               console.log("[PeerJS] DataConnection siap. Memulai panggilan MediaCall ke Host...");
-              const call = peerRef.current.call(hostIdRef.current, localStreamRef.current);
+              const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+              const call = peerRef.current.call(hostIdRef.current, streamToSend);
               if (call) setupMediaCallRef.current(call);
             } catch (callErr) {
               console.warn("[PeerJS] Gagal memanggil host via MediaCall:", callErr);
@@ -499,30 +594,39 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
   // Perubahan local camera stream (misal setelah izin kamera diberikan atau kamera dinyalakan/dimatikan)
   useEffect(() => {
+    localStreamRef.current = localStream;
+    const videoTrack = localStream?.getVideoTracks()[0] || null;
+    const audioTrack = localStream?.getAudioTracks()[0] || null;
+    const hasVideo = Boolean(videoTrack && videoTrack.enabled);
+
+    // Kirimkan status kamera langsung ke pasangan
+    sendCameraState(hasVideo);
+
     const currentCall = callRef.current;
     if (currentCall && currentCall.peerConnection) {
-      const videoTrack = localStream?.getVideoTracks()[0] || null;
-      const audioTrack = localStream?.getAudioTracks()[0] || null;
-
       const pc = currentCall.peerConnection;
       if (pc.getTransceivers) {
         pc.getTransceivers().forEach((transceiver) => {
           if (transceiver.sender) {
             const kind = transceiver.receiver?.track?.kind || transceiver.sender.track?.kind;
-            if (kind === "video") {
-              transceiver.sender.replaceTrack(videoTrack).catch(() => {});
+            if (kind === "video" && videoTrack) {
+              transceiver.sender.replaceTrack(videoTrack).catch((err) => {
+                console.warn("[PeerJS] replaceTrack video error:", err);
+              });
             } else if (kind === "audio" && audioTrack) {
-              transceiver.sender.replaceTrack(audioTrack).catch(() => {});
+              transceiver.sender.replaceTrack(audioTrack).catch((err) => {
+                console.warn("[PeerJS] replaceTrack audio error:", err);
+              });
             }
           }
         });
       } else if (pc.getSenders) {
         const senders = pc.getSenders();
         senders.forEach((sender) => {
-          if (sender.track?.kind === "video" || (!sender.track && videoTrack)) {
+          if (sender.track?.kind === "video" && videoTrack) {
             sender.replaceTrack(videoTrack).catch(() => {});
-          } else if (sender.track?.kind === "audio") {
-            if (audioTrack) sender.replaceTrack(audioTrack).catch(() => {});
+          } else if (sender.track?.kind === "audio" && audioTrack) {
+            sender.replaceTrack(audioTrack).catch(() => {});
           }
         });
       }
@@ -532,17 +636,20 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       !peerRef.current.destroyed &&
       hostIdRef.current &&
       !callRef.current &&
-      localStream
+      connRef.current &&
+      connRef.current.open
     ) {
       // Guest memanggil Host begitu localStream tersedia
       try {
-        const call = peerRef.current.call(hostIdRef.current, localStream);
+        console.log("[PeerJS] LocalStream siap, tamu memulai panggilan ke Host...");
+        const streamToSend = ensureStreamWithBothTracks(localStream);
+        const call = peerRef.current.call(hostIdRef.current, streamToSend);
         if (call) setupMediaCallRef.current(call);
       } catch (err) {
         console.warn("[PeerJS] Gagal memanggil host:", err);
       }
     }
-  }, [localStream]);
+  }, [localStream, sendCameraState]);
 
   // Inisialisasi PeerJS di sisi Client
   useEffect(() => {
@@ -667,8 +774,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             activeGuestIdRef.current = incomingCall.peer;
             setActiveGuestId(incomingCall.peer);
 
-            const streamToAnswer = localStreamRef.current || undefined;
-            incomingCall.answer(streamToAnswer);
+            const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+            incomingCall.answer(streamToSend);
             setupMediaCallRef.current(incomingCall);
           });
 
@@ -723,8 +830,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               try { incomingCall.close(); } catch {}
               return;
             }
-            const streamToAnswer = localStreamRef.current || undefined;
-            incomingCall.answer(streamToAnswer);
+            const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+            incomingCall.answer(streamToSend);
             setupMediaCallRef.current(incomingCall);
           });
 
@@ -822,17 +929,6 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       isReady: nextReady,
     });
   }, [setIsLocalReady, sendData]);
-
-  // Aksi siaran: Perubahan status kamera aktif/nonaktif
-  const sendCameraState = useCallback(
-    (enabled) => {
-      sendData({
-        type: "CAMERA_STATE",
-        enabled: Boolean(enabled),
-      });
-    },
-    [sendData]
-  );
 
   return {
     role,

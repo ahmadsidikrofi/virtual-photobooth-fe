@@ -40,21 +40,37 @@ export function PeerVideoStage({
 
   // Pasang stream video remote nyata ke elemen <video>
   useEffect(() => {
-    if (videoRef.current) {
-      if (remoteStream) {
-        if (videoRef.current.srcObject !== remoteStream) {
-          videoRef.current.srcObject = remoteStream;
-        }
-        if (isPeerCameraActive) {
-          videoRef.current.play().catch((err) => {
-            console.warn("Autoplay remote video terhambat user interaction:", err);
-          });
-        }
-      } else {
-        videoRef.current.srcObject = null;
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    if (remoteStream) {
+      if (videoEl.srcObject !== remoteStream) {
+        videoEl.srcObject = remoteStream;
       }
+      // Selalu putar elemen media agar track audio teman tetap bersuara meskipun kamera dinonaktifkan
+      videoEl.play().catch((err) => {
+        console.warn("Autoplay remote video/audio terhambat user interaction:", err);
+      });
+    } else {
+      videoEl.srcObject = null;
     }
-  }, [remoteStream, isPeerCameraActive, videoRef]);
+  }, [remoteStream, videoRef]);
+
+  // Buka blokir autoplay di peramban ponsel jika initial play dicegah kebijakan browser
+  useEffect(() => {
+    if (!remoteStream) return;
+    const unlockAutoplay = () => {
+      if (videoRef.current && videoRef.current.paused) {
+        videoRef.current.play().catch(() => {});
+      }
+    };
+    window.addEventListener("click", unlockAutoplay, { once: true });
+    window.addEventListener("touchstart", unlockAutoplay, { once: true });
+    return () => {
+      window.removeEventListener("click", unlockAutoplay);
+      window.removeEventListener("touchstart", unlockAutoplay);
+    };
+  }, [remoteStream, videoRef]);
 
   const handleCopyLink = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
