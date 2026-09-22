@@ -25,7 +25,7 @@ export function LobbyHeader({
         {/* Room URL Pill with 1-Click Copy & Role */}
         <div className="flex items-center gap-2 rounded-full border border-[#E6DFD5] bg-white px-1 py-1 text-xs shadow-2xs">
           {role && (
-            <span className="rounded-full bg-[#FAF9F5] border border-[#E6DFD5] px-2 py-0.5 text-[10px] font-bold text-[#757068] uppercase">
+            <span className="max-sm:hidden rounded-full bg-[#FAF9F5] border border-[#E6DFD5] px-2 py-0.5 text-[10px] font-bold text-[#757068] uppercase">
               {role === "host" ? "👑 Host" : "🤝 Guest"}
             </span>
           )}
@@ -35,7 +35,7 @@ export function LobbyHeader({
               title="WebRTC P2P Terkoneksi"
             />
           )} */}
-          <span className="font-mono font-bold text-ink px-2">{roomId}</span>
+          <span className="max-sm:hidden font-mono font-bold text-ink px-2">{roomId}</span>
           <button
             type="button"
             onClick={onCopy}
@@ -57,7 +57,7 @@ export function LobbyHeader({
 
         <button
           onClick={onExit}
-          className="text-xs font-semibold text-[#757068] hover:text-ink transition-colors cursor-pointer"
+          className="max-sm:hidden sm:flex text-xs font-semibold text-[#757068] hover:text-ink transition-colors cursor-pointer"
         >
           Keluar
         </button>
