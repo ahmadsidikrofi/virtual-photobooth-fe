@@ -12,6 +12,7 @@ import {
   Lock,
 } from "lucide-react";
 import { PhotoboothCountdownOverlay } from "./PhotoboothCountdownOverlay";
+import { GestureIcon } from "./GestureIcon";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
 export function LocalVideoStage({
@@ -146,50 +147,46 @@ export function LocalVideoStage({
 
       {/* Toast Visual Deteksi Gestur Tangan (Misal: Pose ✌️ Terdeteksi!) */}
       {gestureFeedback && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full bg-black/85 backdrop-blur-md border border-fun-yellow px-4 py-1.5 text-xs font-black text-fun-yellow shadow-lg animate-in fade-in zoom-in-95 duration-200">
-          <span className="text-sm leading-none">✨</span>
+        <div className="absolute text-center top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full bg-black/85 backdrop-blur-md border border-fun-yellow px-4 py-1.5 text-xs font-black text-fun-yellow shadow-lg animate-in fade-in zoom-in-95 duration-200">
           <span>{gestureFeedback}</span>
         </div>
       )}
 
-      {/* HUD Circular Progress Ring Overlay saat Pose Ditahan (Hold-to-Trigger 2000ms / 2 Detik) */}
+      {/* HUD Circular Progress Ring Overlay saat Pose Ditahan (Tanpa Teks Label, Ikon Vektor Profesional) */}
       {cameraActive && gestureHoldProgress > 0 && activeHoldGesture && !gestureFeedback && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 rounded-full bg-black/85 backdrop-blur-md border border-fun-yellow/80 py-1.5 px-3.5 shadow-lg animate-in fade-in zoom-in-95 duration-150 pointer-events-none">
-          {/* Circular Progress Ring Mini */}
-          <div className="relative flex size-6.5 shrink-0 items-center justify-center">
-            <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center justify-center pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative flex size-12 items-center justify-center rounded-full bg-black/85 backdrop-blur-md border border-white/20 shadow-xl p-1.5">
+            {/* SVG Circular Progress Bar */}
+            <svg className="absolute inset-0 size-full -rotate-90 p-1" viewBox="0 0 44 44">
               {/* Background Ring */}
               <circle
-                cx="18"
-                cy="18"
-                r="14"
+                cx="22"
+                cy="22"
+                r="18"
                 className="stroke-white/20"
-                strokeWidth="3.5"
+                strokeWidth="3"
                 fill="transparent"
               />
               {/* Active Progress Ring */}
               <circle
-                cx="18"
-                cy="18"
-                r="14"
-                className="stroke-fun-yellow transition-all duration-200 ease-out"
-                strokeWidth="3.5"
-                strokeDasharray="87.96"
-                strokeDashoffset={87.96 - (87.96 * gestureHoldProgress) / 100}
+                cx="22"
+                cy="22"
+                r="18"
+                className="stroke-fun-yellow transition-all duration-150 ease-out"
+                strokeWidth="3.2"
+                strokeDasharray={113.1}
+                strokeDashoffset={113.1 - (113.1 * gestureHoldProgress) / 100}
                 strokeLinecap="round"
                 fill="transparent"
               />
             </svg>
-            <span className="absolute text-xs leading-none select-none">
-              {activeHoldGesture.emoji}
-            </span>
-          </div>
 
-          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
-            <span className="font-extrabold text-[#FAF9F5] tracking-tight">
-              {activeHoldGesture.label || activeHoldGesture.categoryName}
-            </span>
-
+            {/* Ikon Vektor Gestur Profesional di Tengah */}
+            <GestureIcon
+              category={activeHoldGesture.categoryName}
+              className="size-5.5 text-fun-yellow relative z-10"
+              strokeWidth={2.2}
+            />
           </div>
         </div>
       )}

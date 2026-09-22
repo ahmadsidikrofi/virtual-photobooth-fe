@@ -19,6 +19,7 @@ import { useRoomStore } from "@/stores/useRoomStore";
 import { saveCuratedSession, GRID_CONFIGS } from "@/lib/room";
 
 export function RoomLobby({ roomId }) {
+  const router = useRouter()
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const videoRef = localVideoRef;

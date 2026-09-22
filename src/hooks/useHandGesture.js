@@ -346,7 +346,7 @@ export function useHandGesture({
         }
 
         // C. Mekanisme Tahan Pose (Hold-to-Trigger 2000ms / 2 Detik):
-        const HOLD_DURATION_MS = 500;
+        const HOLD_DURATION_MS = 1500;
 
         if (detected) {
           // Jika pose saat ini sama dengan pose yang sedang ditahan
