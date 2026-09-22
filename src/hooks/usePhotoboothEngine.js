@@ -159,6 +159,8 @@ export function usePhotoboothEngine({
     return () => clearAllTimers();
   }, [clearAllTimers]);
 
+  const hasPeerDisconnected = useRoomStore((s) => s.hasPeerDisconnected);
+
   // Hentikan sesi foto dan reset dari awal jika partner terdiskoneksi saat sesi foto berlangsung di bilik berdua
   useEffect(() => {
     const hasActiveSession =
@@ -168,11 +170,11 @@ export function usePhotoboothEngine({
       sessionState === "curating" ||
       sessionState === "designing";
 
-    if (role && !remoteStream && hasActiveSession) {
+    if (hasPeerDisconnected && hasActiveSession) {
       clearAllTimers();
       storeResetSession();
     }
-  }, [role, remoteStream, sessionState, clearAllTimers, storeResetSession]);
+  }, [hasPeerDisconnected, sessionState, clearAllTimers, storeResetSession]);
 
   // Capture current video frame(s) to temporary high-res canvas (Solo or Duo Side-by-Side)
   const captureFrame = useCallback(() => {

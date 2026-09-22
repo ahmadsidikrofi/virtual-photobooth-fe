@@ -178,7 +178,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         };
       }
     },
-    [setRemoteStream, setIsPeerJoined, setPeerConnectionStatus, handlePeerDisconnect]
+    [setRemoteStream, setIsPeerJoined, setPeerConnectionStatus, handlePeerDisconnect, setHasPeerDisconnected, setIsPeerCameraActive]
   );
 
   // Setup DataConnection handlers
@@ -283,6 +283,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             setIsPeerReady(Boolean(data.isReady));
             break;
 
+          case "TRIGGER_START":
           case "START_SESSION":
             if (onRemoteStartSessionRef.current) {
               onRemoteStartSessionRef.current();
@@ -330,8 +331,9 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       setTimerDuration,
       setRemoteStream,
       setIsRoomFull,
-      setActiveGuestId,
       handlePeerDisconnect,
+      setHasPeerDisconnected,
+      setIsPeerCameraActive,
     ]
   );
 
@@ -648,6 +650,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     sendData({ type: "START_SESSION" });
   }, [sendData]);
 
+  // Aksi siaran: Pemicu mulai hitung mundur (dapat dikirim baik oleh Host maupun Guest)
+  const sendTriggerStart = useCallback(() => {
+    sendData({ type: "TRIGGER_START" });
+  }, [sendData]);
+
   // Aksi siaran: Sinkronisasi pengaturan layout & timer
   const syncSettings = useCallback(
     (newLayout, newTimer) => {
@@ -693,6 +700,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     remoteStream,
     peerConnectionStatus,
     triggerRemoteStartSession,
+    sendTriggerStart,
     syncSettings,
     toggleReady,
     leaveRoom,

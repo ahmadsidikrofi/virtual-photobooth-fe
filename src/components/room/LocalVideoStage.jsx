@@ -34,6 +34,9 @@ export function LocalVideoStage({
   onOpenSettings,
   onQuickFlipCamera,
   facingMode = "user",
+  gestureFeedback = null,
+  gestureHoldProgress = 0,
+  activeHoldGesture = null,
   // Engine overlay props (optional with Zustand store fallback)
   sessionState: propSessionState,
   countdownValue: propCountdownValue,
@@ -141,6 +144,56 @@ export function LocalVideoStage({
         </div>
       </div>
 
+      {/* Toast Visual Deteksi Gestur Tangan (Misal: Pose ✌️ Terdeteksi!) */}
+      {gestureFeedback && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full bg-black/85 backdrop-blur-md border border-fun-yellow px-4 py-1.5 text-xs font-black text-fun-yellow shadow-lg animate-in fade-in zoom-in-95 duration-200">
+          <span className="text-sm leading-none">✨</span>
+          <span>{gestureFeedback}</span>
+        </div>
+      )}
+
+      {/* HUD Circular Progress Ring Overlay saat Pose Ditahan (Hold-to-Trigger 2000ms / 2 Detik) */}
+      {cameraActive && gestureHoldProgress > 0 && activeHoldGesture && !gestureFeedback && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 rounded-full bg-black/85 backdrop-blur-md border border-fun-yellow/80 py-1.5 px-3.5 shadow-lg animate-in fade-in zoom-in-95 duration-150 pointer-events-none">
+          {/* Circular Progress Ring Mini */}
+          <div className="relative flex size-6.5 shrink-0 items-center justify-center">
+            <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+              {/* Background Ring */}
+              <circle
+                cx="18"
+                cy="18"
+                r="14"
+                className="stroke-white/20"
+                strokeWidth="3.5"
+                fill="transparent"
+              />
+              {/* Active Progress Ring */}
+              <circle
+                cx="18"
+                cy="18"
+                r="14"
+                className="stroke-fun-yellow transition-all duration-200 ease-out"
+                strokeWidth="3.5"
+                strokeDasharray="87.96"
+                strokeDashoffset={87.96 - (87.96 * gestureHoldProgress) / 100}
+                strokeLinecap="round"
+                fill="transparent"
+              />
+            </svg>
+            <span className="absolute text-xs leading-none select-none">
+              {activeHoldGesture.emoji}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <span className="font-extrabold text-[#FAF9F5] tracking-tight">
+              {activeHoldGesture.label || activeHoldGesture.categoryName}
+            </span>
+
+          </div>
+        </div>
+      )}
+
       {/* Tombol Balik Kamera Cepat di Ponsel / Kamera Depan-Belakang */}
       {cameraActive && !(sessionState === "countdown" || sessionState === "flash" || sessionState === "transition") && onQuickFlipCamera && (
         <button
@@ -163,75 +216,74 @@ export function LocalVideoStage({
         return (
           <div className="absolute bottom-3 right-3 flex items-center gap-2 pointer-events-auto z-10">
             {/* Tombol Kontrol Perangkat (Settings, Mic & Kamera) */}
-              {/* Tombol Pengaturan Perangkat (Settings Gear) */}
-              {onOpenSettings && (
-                <button
-                  type="button"
-                  disabled={isCapturingSession}
-                  onClick={isCapturingSession ? undefined : onOpenSettings}
-                  title="Pengaturan Perangkat Kamera & Mikrofon"
-                  className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${
-                    isCapturingSession
-                      ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
-                      : "bg-black/60 border-white/20 text-white hover:bg-black/80 hover:scale-105 cursor-pointer active:scale-95"
-                  }`}
-                >
-                  <Settings className="size-3.5" />
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={onMicClick}
-                title={
-                  micPermission === "denied"
-                    ? "Akses mikrofon diblokir di browser (klik untuk membuka panduan)"
-                    : !isMicAvailable
-                      ? "Mikrofon belum aktif (klik untuk menghubungkan)"
-                      : micActive
-                        ? "Matikan Mikrofon"
-                        : "Nyalakan Mikrofon"
-                }
-                className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all cursor-pointer ${!micActive || !isMicAvailable || micPermission === "denied"
-                    ? "bg-[#E53E3E] border-[#E53E3E] text-white"
-                    : isSpeaking
-                      ? "bg-black/80 border-emerald-400 text-emerald-400 ring-2 ring-emerald-400/80"
-                      : "bg-black/60 border-white/20 text-white hover:bg-black/80"
-                  }`}
-              >
-                {micActive && isMicAvailable && micPermission !== "denied" ? (
-                  <Mic className="size-3.5" />
-                ) : (
-                  <MicOff className="size-3.5" />
-                )}
-              </button>
-
+            {/* Tombol Pengaturan Perangkat (Settings Gear) */}
+            {onOpenSettings && (
               <button
                 type="button"
                 disabled={isCapturingSession}
-                onClick={isCapturingSession ? undefined : onCameraClick}
-                title={
-                  isCapturingSession
-                    ? "Kamera tidak dapat dimatikan saat sesi foto sedang berlangsung"
-                    : cameraPermission === "denied"
-                      ? "Akses kamera diblokir di browser (klik untuk membuka panduan)"
-                      : cameraActive
-                        ? "Matikan Kamera"
-                        : "Nyalakan Kamera"
-                }
+                onClick={isCapturingSession ? undefined : onOpenSettings}
+                title="Pengaturan Perangkat Kamera & Mikrofon"
                 className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${isCapturingSession
-                    ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
-                    : cameraActive && cameraPermission !== "denied"
-                      ? "bg-black/60 border-white/20 text-white hover:bg-black/80 cursor-pointer"
-                      : "bg-[#E53E3E] border-[#E53E3E] text-white cursor-pointer"
+                  ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
+                  : "bg-black/60 border-white/20 text-white hover:bg-black/80 hover:scale-105 cursor-pointer active:scale-95"
                   }`}
               >
-                {cameraActive && cameraPermission !== "denied" ? (
-                  <Camera className="size-3.5" />
-                ) : (
-                  <CameraOff className="size-3.5" />
-                )}
+                <Settings className="size-3.5" />
               </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onMicClick}
+              title={
+                micPermission === "denied"
+                  ? "Akses mikrofon diblokir di browser (klik untuk membuka panduan)"
+                  : !isMicAvailable
+                    ? "Mikrofon belum aktif (klik untuk menghubungkan)"
+                    : micActive
+                      ? "Matikan Mikrofon"
+                      : "Nyalakan Mikrofon"
+              }
+              className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all cursor-pointer ${!micActive || !isMicAvailable || micPermission === "denied"
+                ? "bg-[#E53E3E] border-[#E53E3E] text-white"
+                : isSpeaking
+                  ? "bg-black/80 border-emerald-400 text-emerald-400 ring-2 ring-emerald-400/80"
+                  : "bg-black/60 border-white/20 text-white hover:bg-black/80"
+                }`}
+            >
+              {micActive && isMicAvailable && micPermission !== "denied" ? (
+                <Mic className="size-3.5" />
+              ) : (
+                <MicOff className="size-3.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={isCapturingSession}
+              onClick={isCapturingSession ? undefined : onCameraClick}
+              title={
+                isCapturingSession
+                  ? "Kamera tidak dapat dimatikan saat sesi foto sedang berlangsung"
+                  : cameraPermission === "denied"
+                    ? "Akses kamera diblokir di browser (klik untuk membuka panduan)"
+                    : cameraActive
+                      ? "Matikan Kamera"
+                      : "Nyalakan Kamera"
+              }
+              className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${isCapturingSession
+                ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
+                : cameraActive && cameraPermission !== "denied"
+                  ? "bg-black/60 border-white/20 text-white hover:bg-black/80 cursor-pointer"
+                  : "bg-[#E53E3E] border-[#E53E3E] text-white cursor-pointer"
+                }`}
+            >
+              {cameraActive && cameraPermission !== "denied" ? (
+                <Camera className="size-3.5" />
+              ) : (
+                <CameraOff className="size-3.5" />
+              )}
+            </button>
           </div>
         );
       })()}

@@ -13,6 +13,7 @@ import { MediaPermissionDialog } from "./MediaPermissionDialog";
 import { DeviceSettingsModal } from "./DeviceSettingsModal";
 import { usePhotoboothEngine } from "@/hooks/usePhotoboothEngine";
 import { usePeerRoom } from "@/hooks/usePeerRoom";
+import { useHandGesture } from "@/hooks/useHandGesture";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { saveCuratedSession, GRID_CONFIGS } from "@/lib/room";
@@ -61,6 +62,7 @@ export function RoomLobby({ roomId }) {
   const [facingMode, setFacingMode] = useState("user"); // "user" | "environment"
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSwitchingDevice, setIsSwitchingDevice] = useState(false);
+  const [isGestureEnabled, setIsGestureEnabled] = useState(false);
 
   // 1. Photobooth Engine Hook (Hardware Capture Loop & Countdown Audio)
   const engine = usePhotoboothEngine({
@@ -81,6 +83,7 @@ export function RoomLobby({ roomId }) {
     remoteStream,
     peerConnectionStatus,
     triggerRemoteStartSession,
+    sendTriggerStart,
     syncSettings,
     toggleReady,
     leaveRoom,
@@ -97,6 +100,76 @@ export function RoomLobby({ roomId }) {
       engine.resetSession();
       useRoomStore.getState().setIsLocalReady(false);
     },
+  });
+
+  // Fungsi Mulai Sesi Foto Manual (Klik dari PreShootControls)
+  const handleStartSession = useCallback(() => {
+    if (studioMode === "duo" && isHost && remoteStream) {
+      triggerRemoteStartSession();
+    }
+    engine.startSession();
+  }, [studioMode, isHost, remoteStream, triggerRemoteStartSession, engine]);
+
+  // Pemicu Mulai Hitung Mundur dari Deteksi Gestur Tangan
+  const handleGestureTrigger = useCallback(
+    ({ categoryName, emoji, setFeedback }) => {
+      // 1. Gesture dari sisi Guest tetap terdeteksi, tapi JANGAN picu sesi berfoto (hanya Host yang bisa memicu)
+      if (isGuest) {
+        setFeedback(`Pose ${emoji} Terdeteksi! (Hanya Host yang dapat memulai foto)`);
+        return;
+      }
+
+      // 2. Jika sesi tidak idle atau kamera belum siap, abaikan
+      if (sessionState !== "idle" || !cameraActive || isLoadingCamera) {
+        return;
+      }
+
+      // 3. Di mode Bilik Berdua:
+      if (studioMode === "duo") {
+        if (!remoteStream) {
+          setFeedback(`Pose ${emoji} Terdeteksi! (Menunggu teman bergabung)`);
+          return;
+        }
+        if (!isPeerCameraActive) {
+          setFeedback(`Pose ${emoji} Terdeteksi! (Kamera teman belum aktif)`);
+          return;
+        }
+        // Jika Guest belum klik tombol "Tandai Saya Siap Foto":
+        // Jangan picu sesi foto, tetapi tetap deteksi gesturnya dan beri informasi
+        if (!isPeerReady) {
+          setFeedback(`Pose ${emoji} Terdeteksi! (Menunggu teman siap)`);
+          return;
+        }
+
+        // Jika Guest sudah siap, kirim sinyal mulai ke pasangan
+        sendTriggerStart();
+      }
+
+      // 4. Picu sesi foto jika semua syarat terpenuhi (Solo atau Duo saat Guest sudah siap)
+      setFeedback(`Pose ${emoji} Terdeteksi! Bersiap...`);
+      engine.startSession();
+    },
+    [
+      isGuest,
+      sessionState,
+      cameraActive,
+      isLoadingCamera,
+      studioMode,
+      remoteStream,
+      isPeerCameraActive,
+      isPeerReady,
+      sendTriggerStart,
+      engine,
+    ]
+  );
+
+  // 3. Deteksi Gestur Tangan (MediaPipe Tasks-Vision)
+  const { gestureFeedback, gestureHoldProgress, activeHoldGesture } = useHandGesture({
+    videoRef: localVideoRef,
+    isEnabled: isGestureEnabled,
+    sessionState,
+    cameraActive,
+    onGestureTrigger: handleGestureTrigger,
   });
 
   // Shareable Room URL
@@ -376,6 +449,7 @@ export function RoomLobby({ roomId }) {
       if (cameraStatus) cameraStatus.onchange = null;
       if (micStatus) micStatus.onchange = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Handler retry from MediaPermissionDialog
@@ -771,7 +845,9 @@ export function RoomLobby({ roomId }) {
 
   // Auto-start camera & mic preview
   useEffect(() => {
-    startMedia();
+    const timer = setTimeout(() => {
+      startMedia();
+    }, 0);
 
     const handleBeforeUnload = () => {
       leaveRoom();
@@ -782,6 +858,7 @@ export function RoomLobby({ roomId }) {
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
+      clearTimeout(timer);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
@@ -793,6 +870,7 @@ export function RoomLobby({ roomId }) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ensure stream attached when camera is active or when returning from curating to idle
@@ -957,6 +1035,9 @@ export function RoomLobby({ roomId }) {
               onOpenSettings={() => setIsSettingsOpen(true)}
               onQuickFlipCamera={handleQuickFlipCamera}
               facingMode={facingMode}
+              gestureFeedback={gestureFeedback}
+              gestureHoldProgress={gestureHoldProgress}
+              activeHoldGesture={activeHoldGesture}
               sessionState={engine.sessionState}
               countdownValue={engine.countdownValue}
               currentShot={engine.currentShot}
@@ -994,12 +1075,8 @@ export function RoomLobby({ roomId }) {
                 syncSettings(engine.selectedLayout, timer);
               }
             }}
-            onStartSession={() => {
-              if (studioMode === "duo" && isHost && remoteStream) {
-                triggerRemoteStartSession();
-              }
-              engine.startSession();
-            }}
+            onStartSession={handleStartSession}
+            isGestureEnabled={isGestureEnabled}
             cameraActive={cameraActive}
             isLoadingCamera={isLoadingCamera}
             isDuoMode={studioMode === "duo"}
@@ -1044,6 +1121,8 @@ export function RoomLobby({ roomId }) {
         onQuickFlipCamera={handleQuickFlipCamera}
         facingMode={facingMode}
         isSwitchingDevice={isSwitchingDevice}
+        isGestureEnabled={isGestureEnabled}
+        onToggleGesture={() => setIsGestureEnabled((prev) => !prev)}
       />
     </div>
   );

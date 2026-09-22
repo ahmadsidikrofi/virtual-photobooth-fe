@@ -41,6 +41,7 @@ export function PreShootControls({
   isLocalReady = false,
   isPeerCameraActive = true,
   remoteStream = null,
+  isGestureEnabled = false,
   onToggleReady,
 }) {
   const storeLayout = usePhotoboothStore((s) => s.selectedLayout);

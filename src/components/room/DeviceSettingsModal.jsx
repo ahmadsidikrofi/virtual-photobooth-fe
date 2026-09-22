@@ -16,7 +16,17 @@ import {
   ChevronDown,
   Check,
   Loader2,
+  Hand,
+  BadgeInfoIcon,
 } from "lucide-react";
+import { GooeyStatusTooltip } from "@/components/shadcn-space/radix/tooltip/gooey-status-tooltip";
+
+const GESTURE_TOOLTIP_DATA = [
+  { key: "victory", label: "✌️ Victory" },
+  { key: "iloveyou", label: "🤟 I Love You" },
+  { key: "catpaw", label: "🐾 Cat Paw" },
+  { key: "halfheart", label: "🫶 Half Heart" },
+];
 
 /**
  * DeviceSettingsModal
@@ -38,6 +48,8 @@ export function DeviceSettingsModal({
   onQuickFlipCamera,
   facingMode = "user",
   isSwitchingDevice = false,
+  isGestureEnabled = false,
+  onToggleGesture,
 }) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -132,6 +144,45 @@ export function DeviceSettingsModal({
                       }`}
                   >
                     {isMirrored && <Check className="size-3 text-[#1F1A16] stroke-[3]" />}
+                  </span>
+                </button>
+              </div>
+
+              {/* Toggle Mode Gestur Tangan (Hands-free Pose Detection) */}
+              <div className="mt-1 flex items-center justify-between rounded-2xl border border-[#E6DFD5] bg-[#F5F0E8] hover:bg-[#EFE9DE] py-1 px-2 shadow-2xs">
+                <div className="flex items-center gap-2.5 pr-2">
+                  <div className="flex size-7.5 shrink-0 items-center justify-center rounded-xl bg-primary text-[#1F1A16]">
+                    <Hand className="size-3.5 text-white stroke-[2.2]" />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <h5 className="text-xs font-bold text-[#1F1A16]">
+                      Mode Gestur
+                    </h5>
+                    <GooeyStatusTooltip
+                      title="Gestur yang didukung:"
+                      data={GESTURE_TOOLTIP_DATA}
+                      direction="top"
+                      icon={BadgeInfoIcon}
+                      triggerLabel="Informasi gestur yang didukung"
+                      triggerSize={20}
+                      panelWidth={210}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onToggleGesture}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isGestureEnabled ? "bg-fun-yellow" : "bg-[#D1C9BE]"
+                    }`}
+                  role="switch"
+                  aria-checked={isGestureEnabled}
+                >
+                  <span
+                    className={`pointer-events-none inline-flex size-5 items-center justify-center transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${isGestureEnabled ? "translate-x-5" : "translate-x-0"
+                      }`}
+                  >
+                    {isGestureEnabled && <Check className="size-3 text-[#1F1A16] stroke-[3]" />}
                   </span>
                 </button>
               </div>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle, Copy, Check, Hourglass, CameraOff, WifiOff } from "lucide-react";
+import { MessageCircle, Copy, Check, CameraOff, WifiOff } from "lucide-react";
+import { AnimatedHourglass } from "./AnimatedHourglass";
 import { useRoomStore } from "@/stores/useRoomStore";
 
 export function PeerVideoStage({
@@ -162,8 +163,8 @@ export function PeerVideoStage({
         ) : (
           // Status B: Awal Menunggu Pasangan Bergabung Pertama Kali
           <div className="flex flex-col items-center gap-3 max-w-sm w-full">
-            <div className="flex size-13 items-center justify-center rounded-full bg-[#F5F0E8] border border-[#E6DFD5] shadow-xs">
-              <Hourglass className="size-6 text-[#757068]" />
+            <div className="flex size-14 items-center justify-center rounded-full bg-[#FAF5EE] border-2 border-[#E6DFD5] shadow-2xs">
+              <AnimatedHourglass className="size-7.5 text-[#1F1A16]" />
             </div>
 
             <div>
