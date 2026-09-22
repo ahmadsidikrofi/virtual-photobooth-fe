@@ -4,16 +4,33 @@ import { useEffect, useRef, useCallback } from "react";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
-// Konfigurasi WebRTC STUN multi-server untuk kehandalan NAT traversal di berbagai ISP
+// Konfigurasi WebRTC STUN & TURN multi-server untuk kehandalan NAT traversal di berbagai ISP (Wi-Fi, 4G/5G, Symmetric NAT)
 const PEER_CONFIG = {
   iceServers: [
+    // STUN Servers (Google & Cloudflare)
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    { urls: "stun:openrelay.metered.ca:80" },
+    // TURN Relay Servers (Open Relay Project by Metered.ca)
+    // Berfungsi meneruskan paket video & data saat terhalang Symmetric NAT / data seluler 4G/5G
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -303,6 +320,17 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             isReady: isLocalReadyRef.current,
             cameraActive: hasActiveVideo,
           });
+
+          // Setelah DataConnection stabil dan terbuka, panggil Host membawa stream video lokal jika belum dipanggil
+          if (roleRef.current === "guest" && peerRef.current && !callRef.current && localStreamRef.current && hostIdRef.current) {
+            try {
+              console.log("[PeerJS] DataConnection siap. Memulai panggilan MediaCall ke Host...");
+              const call = peerRef.current.call(hostIdRef.current, localStreamRef.current);
+              if (call) setupMediaCallRef.current(call);
+            } catch (callErr) {
+              console.warn("[PeerJS] Gagal memanggil host via MediaCall:", callErr);
+            }
+          }
         }
       });
 
@@ -415,6 +443,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           } else if (pc.connectionState === "disconnected") {
             startDisconnectGracePeriod("DataConn connectionState disconnected");
           } else if (pc.connectionState === "failed") {
+            if (callRef.current && callRef.current.open) {
+              console.warn("[PeerJS DataConn] DataConn connectionState failed tapi MediaCall masih aktif. Pertahankan sesi.");
+              return;
+            }
             startDisconnectGracePeriod("DataConn connectionState failed");
           } else if (pc.connectionState === "closed") {
             if (!callRef.current || !callRef.current.open) {
@@ -429,6 +461,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           } else if (pc.iceConnectionState === "disconnected") {
             startDisconnectGracePeriod("DataConn ICE disconnected");
           } else if (pc.iceConnectionState === "failed") {
+            if (callRef.current && callRef.current.open) {
+              console.warn("[PeerJS DataConn] DataConn ICE failed tapi MediaCall masih aktif. Pertahankan sesi.");
+              return;
+            }
             startDisconnectGracePeriod("DataConn ICE failed");
           }
         };
@@ -538,115 +574,109 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           (sessionStorage.getItem(`snapmate_host_${cleanRoomId}`) === "true" ||
             new URLSearchParams(window.location.search).get("host") === "1");
 
-        // LANGKAH 1: Mendaftar sebagai Host dengan ID deterministik
-        localPeer = new Peer(targetHostId, {
-          config: PEER_CONFIG,
-          debug: 1,
-        });
-        peerRef.current = localPeer;
+        if (isCreatorHost) {
+          // ==========================================
+          // ALUR HOST: Mendaftar dengan ID target deterministik
+          // ==========================================
+          localPeer = new Peer(targetHostId, {
+            config: PEER_CONFIG,
+            debug: 1,
+          });
+          peerRef.current = localPeer;
 
-        localPeer.on("open", () => {
-          if (isDestroyedRef.current) return;
-          setRole("host");
-          setPeerConnectionStatus("connected");
-          activeGuestIdRef.current = null;
-          setActiveGuestId(null);
-          // Murni null saat belum ada tamu
-          setRemoteStream(null);
-          setIsPeerJoined(false);
-        });
+          localPeer.on("open", () => {
+            if (isDestroyedRef.current) return;
+            console.log("[PeerJS] Host berhasil terdaftar dengan ID:", targetHostId);
+            setRole("host");
+            setPeerConnectionStatus("connected");
+            activeGuestIdRef.current = null;
+            setActiveGuestId(null);
+            setRemoteStream(null);
+            setIsPeerJoined(false);
+          });
 
-        // SPESIFIKASI: Host mendengarkan koneksi data masuk dengan batas maksimal 2 orang
-        localPeer.on("connection", (conn) => {
-          if (isDestroyedRef.current) return;
+          // Host mendengarkan koneksi data masuk dengan batas maksimal 2 orang
+          localPeer.on("connection", (conn) => {
+            if (isDestroyedRef.current) return;
 
-          // Tolak koneksi dari diri sendiri
-          if (conn.peer === localPeer.id || (peerRef.current && conn.peer === peerRef.current.id)) {
-            console.warn("[PeerJS] Mengabaikan koneksi ke diri sendiri:", conn.peer);
-            try {
-              conn.close();
-            } catch {}
-            return;
-          }
-
-          // Cek: Jika activeGuestId sudah terisi dan ID yang masuk berbeda -> TOLAK (ROOM_FULL)
-          if (activeGuestIdRef.current && activeGuestIdRef.current !== conn.peer) {
-            console.warn(
-              `[PeerJS] Ruangan penuh. Menolak tamu baru (${conn.peer}). Tamu aktif: ${activeGuestIdRef.current}`
-            );
-
-            const rejectAndDisconnect = () => {
-              try {
-                conn.send({ type: "ROOM_FULL" });
-              } catch {}
-              setTimeout(() => {
-                try {
-                  conn.close();
-                } catch {}
-              }, 500);
-            };
-
-            if (conn.open) {
-              rejectAndDisconnect();
-            } else {
-              conn.on("open", rejectAndDisconnect);
+            // Tolak koneksi dari diri sendiri
+            if (conn.peer === localPeer.id || (peerRef.current && conn.peer === peerRef.current.id)) {
+              console.warn("[PeerJS] Mengabaikan koneksi ke diri sendiri:", conn.peer);
+              try { conn.close(); } catch {}
+              return;
             }
-            return;
-          }
 
-          // Jika activeGuestId masih kosong: Simpan ID tamu ini
-          activeGuestIdRef.current = conn.peer;
-          setActiveGuestId(conn.peer);
-          setupDataConnectionRef.current(conn);
-        });
+            // Cek jika sudah ada tamu lain yang benar-benar aktif terhubung (connRef terbuka)
+            const isOtherGuestActive =
+              connRef.current &&
+              connRef.current.open &&
+              activeGuestIdRef.current &&
+              activeGuestIdRef.current !== conn.peer;
 
-        // Host mendengarkan panggilan video masuk
-        localPeer.on("call", (incomingCall) => {
-          if (isDestroyedRef.current) return;
+            if (isOtherGuestActive) {
+              console.warn(
+                `[PeerJS] Ruangan penuh. Menolak tamu baru (${conn.peer}). Tamu aktif: ${activeGuestIdRef.current}`
+              );
 
-          // Tolak panggilan dari diri sendiri
-          if (
-            incomingCall.peer === localPeer.id ||
-            (peerRef.current && incomingCall.peer === peerRef.current.id)
-          ) {
-            console.warn("[PeerJS] Mengabaikan panggilan dari diri sendiri:", incomingCall.peer);
-            try {
-              incomingCall.close();
-            } catch {}
-            return;
-          }
+              const rejectAndDisconnect = () => {
+                try { conn.send({ type: "ROOM_FULL" }); } catch {}
+                setTimeout(() => { try { conn.close(); } catch {} }, 500);
+              };
 
-          // Tolak panggilan jika bukan dari tamu aktif
-          if (activeGuestIdRef.current && incomingCall.peer !== activeGuestIdRef.current) {
-            console.warn("[PeerJS] Menolak stream video dari tamu tidak sah:", incomingCall.peer);
-            try {
-              incomingCall.close();
-            } catch {}
-            return;
-          }
+              if (conn.open) {
+                rejectAndDisconnect();
+              } else {
+                conn.on("open", rejectAndDisconnect);
+              }
+              return;
+            }
 
-          if (!activeGuestIdRef.current) {
+            // Simpan tamu ini (baik tamu pertama atau setelah tamu lama me-refresh halaman)
+            console.log("[PeerJS] Host menerima DataConnection dari tamu:", conn.peer);
+            activeGuestIdRef.current = conn.peer;
+            setActiveGuestId(conn.peer);
+            setupDataConnectionRef.current(conn);
+          });
+
+          // Host mendengarkan panggilan video masuk
+          localPeer.on("call", (incomingCall) => {
+            if (isDestroyedRef.current) return;
+
+            if (
+              incomingCall.peer === localPeer.id ||
+              (peerRef.current && incomingCall.peer === peerRef.current.id)
+            ) {
+              console.warn("[PeerJS] Mengabaikan panggilan dari diri sendiri:", incomingCall.peer);
+              try { incomingCall.close(); } catch {}
+              return;
+            }
+
+            const isOtherGuestActive =
+              connRef.current &&
+              connRef.current.open &&
+              activeGuestIdRef.current &&
+              activeGuestIdRef.current !== incomingCall.peer;
+
+            if (isOtherGuestActive) {
+              console.warn("[PeerJS] Menolak stream video dari tamu tidak sah:", incomingCall.peer);
+              try { incomingCall.close(); } catch {}
+              return;
+            }
+
+            console.log("[PeerJS] Host menerima panggilan MediaCall dari tamu:", incomingCall.peer);
             activeGuestIdRef.current = incomingCall.peer;
             setActiveGuestId(incomingCall.peer);
-          }
 
-          const streamToAnswer = localStreamRef.current || undefined;
-          incomingCall.answer(streamToAnswer);
-          setupMediaCallRef.current(incomingCall);
-        });
+            const streamToAnswer = localStreamRef.current || undefined;
+            incomingCall.answer(streamToAnswer);
+            setupMediaCallRef.current(incomingCall);
+          });
 
-        // LANGKAH 2: Tangani jika ID Host sudah terpakai ("unavailable-id")
-        localPeer.on("error", (err) => {
-          if (isDestroyedRef.current) return;
+          localPeer.on("error", (err) => {
+            if (isDestroyedRef.current) return;
 
-          if (err.type === "unavailable-id") {
-            try {
-              localPeer.destroy();
-            } catch {}
-
-            // Jika pengguna ini adalah pembuat ruangan (Host), tunggu 800ms dan coba klaim ulang
-            // (karena soket lama dari refresh / dev remount masih dilepas server cloud)
-            if (isCreatorHost) {
+            if (err.type === "unavailable-id") {
+              try { localPeer.destroy(); } catch {}
               console.warn("[PeerJS] Host ID masih dilepas server cloud. Mencoba ulang dalam 800ms...");
               setTimeout(() => {
                 if (!isDestroyedRef.current) {
@@ -655,66 +685,57 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               }, 800);
               return;
             }
-
-            // Jika pengguna adalah tamu yang bergabung: gunakan Peer ID acak baru (new Peer())
-            const guestPeer = new Peer(undefined, {
-              config: PEER_CONFIG,
-              debug: 1,
-            });
-            peerRef.current = guestPeer;
-
-            guestPeer.on("open", () => {
-              if (isDestroyedRef.current) return;
-              // Jika targetHostId sama dengan ID guest sendiri, jangan panggil diri sendiri
-              if (targetHostId === guestPeer.id) return;
-
-              setRole("guest");
-              setPeerConnectionStatus("connecting");
-              setRemoteStream(null);
-              setIsPeerJoined(false);
-
-              // Guest membuat Data Connection ke Host
-              const conn = guestPeer.connect(targetHostId, {
-                reliable: true,
-              });
-              setupDataConnectionRef.current(conn);
-
-              // Guest memanggil (call) ke Host membawa localStream
-              if (localStreamRef.current) {
-                try {
-                  const call = guestPeer.call(targetHostId, localStreamRef.current);
-                  if (call) setupMediaCallRef.current(call);
-                } catch (callErr) {
-                  console.warn("[PeerJS] Guest error calling host:", callErr);
-                }
-              }
-            });
-
-            guestPeer.on("call", (incomingCall) => {
-              if (isDestroyedRef.current) return;
-              if (
-                incomingCall.peer === guestPeer.id ||
-                (peerRef.current && incomingCall.peer === peerRef.current.id)
-              ) {
-                try {
-                  incomingCall.close();
-                } catch {}
-                return;
-              }
-              const streamToAnswer = localStreamRef.current || undefined;
-              incomingCall.answer(streamToAnswer);
-              setupMediaCallRef.current(incomingCall);
-            });
-
-            guestPeer.on("error", (guestErr) => {
-              console.warn("[PeerJS] Guest peer error:", guestErr);
-              setPeerConnectionStatus("failed");
-            });
-          } else {
-            console.warn("[PeerJS] Peer general error:", err);
+            console.warn("[PeerJS] Host peer error:", err);
             setPeerConnectionStatus("failed");
-          }
-        });
+          });
+        } else {
+          // ==========================================
+          // ALUR GUEST: Langsung mendaftar dengan ID unik (tanpa tabrakan ID Host)
+          // ==========================================
+          console.log("[PeerJS] Mendaftar sebagai Tamu (Guest)...");
+          const guestPeer = new Peer(undefined, {
+            config: PEER_CONFIG,
+            debug: 1,
+          });
+          peerRef.current = guestPeer;
+
+          guestPeer.on("open", () => {
+            if (isDestroyedRef.current) return;
+            console.log("[PeerJS] Tamu berhasil terdaftar dengan ID unik:", guestPeer.id);
+
+            setRole("guest");
+            setPeerConnectionStatus("connecting");
+            setRemoteStream(null);
+            setIsPeerJoined(false);
+
+            // 1. Guest membuat Data Connection ke Host terlebih dahulu
+            console.log("[PeerJS] Tamu membuka DataConnection ke Host:", targetHostId);
+            const conn = guestPeer.connect(targetHostId);
+            setupDataConnectionRef.current(conn);
+          });
+
+          guestPeer.on("call", (incomingCall) => {
+            if (isDestroyedRef.current) return;
+            if (
+              incomingCall.peer === guestPeer.id ||
+              (peerRef.current && incomingCall.peer === peerRef.current.id)
+            ) {
+              try { incomingCall.close(); } catch {}
+              return;
+            }
+            const streamToAnswer = localStreamRef.current || undefined;
+            incomingCall.answer(streamToAnswer);
+            setupMediaCallRef.current(incomingCall);
+          });
+
+          guestPeer.on("error", (guestErr) => {
+            console.warn("[PeerJS] Guest peer error:", guestErr);
+            if (guestErr.type === "peer-unavailable") {
+              console.warn("[PeerJS] Host belum online di ruangan ini.");
+            }
+            setPeerConnectionStatus("failed");
+          });
+        }
       } catch (e) {
         console.error("[PeerJS] Gagal inisialisasi peer:", e);
         setPeerConnectionStatus("failed");
