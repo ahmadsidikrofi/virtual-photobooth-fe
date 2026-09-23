@@ -7,12 +7,8 @@ import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 // Konfigurasi WebRTC STUN & TURN multi-server untuk kehandalan NAT traversal di berbagai ISP (Wi-Fi, 4G/5G, Symmetric NAT)
 const PEER_CONFIG = {
   iceServers: [
-    // STUN Servers (Google & Cloudflare)
+    // STUN Servers (Google & Cloudflare) - Ringkas dan cepat agar tidak memenuhi tabel NAT router Wi-Fi
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
     // TURN Relay Servers (Open Relay Project by Metered.ca)
     // Berfungsi meneruskan paket video & data saat terhalang Symmetric NAT / data seluler 4G/5G
@@ -101,8 +97,10 @@ function ensureStreamWithBothTracks(sourceStream) {
   return new MediaStream(tracks);
 }
 
-// Toleransi waktu gangguan jaringan sesaat (buffer toleransi) sebelum menyatakan koneksi putus permanen
-const DISCONNECT_GRACE_PERIOD_MS = 6500;
+// Toleransi waktu gangguan jaringan sesaat (buffer toleransi) sebelum menyatakan koneksi putus permanen.
+// Diberikan 14000ms (14 detik) agar router Wi-Fi lokal punya cukup waktu untuk menyelesaikan
+// proses fallback dari kandidat STUN langsung ke Server TURN Relay tanpa memutus sesi pengguna secara prematur.
+const DISCONNECT_GRACE_PERIOD_MS = 14000;
 
 export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerDisconnect }) {
   // Zustand Room Store selectors
@@ -145,6 +143,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
   const onRemoteStartSessionRef = useRef(onRemoteStartSession);
   const onPeerDisconnectRef = useRef(onPeerDisconnect);
   const disconnectTimerRef = useRef(null);
+  const heartbeatTimerRef = useRef(null);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -198,6 +197,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     if (disconnectTimerRef.current) {
       clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
+    }
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
 
     if (roleRef.current === "host") {
@@ -349,6 +352,17 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               }
             } catch {}
             startDisconnectGracePeriod("MediaCall connectionState failed");
+            if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current) {
+              try {
+                console.log("[PeerJS] Guest melakukan re-call otomatis ke Host setelah MediaCall connectionState failed...");
+                try { call.close(); } catch {}
+                const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+                const newCall = peerRef.current.call(hostIdRef.current, streamToSend);
+                if (newCall) setupMediaCallRef.current(newCall);
+              } catch (reErr) {
+                console.warn("[PeerJS] Gagal auto re-call:", reErr);
+              }
+            }
           } else if (pc.connectionState === "closed") {
             if (!connRef.current || !connRef.current.open) {
               handlePeerDisconnect();
@@ -369,6 +383,17 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               }
             } catch {}
             startDisconnectGracePeriod("MediaCall ICE failed");
+            if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current) {
+              try {
+                console.log("[PeerJS] Guest melakukan re-call otomatis ke Host setelah MediaCall ICE failed...");
+                try { call.close(); } catch {}
+                const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+                const newCall = peerRef.current.call(hostIdRef.current, streamToSend);
+                if (newCall) setupMediaCallRef.current(newCall);
+              } catch (reErr) {
+                console.warn("[PeerJS] Gagal auto re-call:", reErr);
+              }
+            }
           }
         };
       }
@@ -426,6 +451,16 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               console.warn("[PeerJS] Gagal memanggil host via MediaCall:", callErr);
             }
           }
+
+          // Mulai heartbeat ping/pong berkala untuk mencegah router Wi-Fi memutus sesi karena idle NAT timeout
+          if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+          heartbeatTimerRef.current = setInterval(() => {
+            if (connRef.current && connRef.current.open) {
+              try {
+                connRef.current.send({ type: "HEARTBEAT_PING", t: Date.now() });
+              } catch {}
+            }
+          }, 3000);
         }
       });
 
@@ -453,6 +488,19 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         }
 
         switch (data.type) {
+          case "HEARTBEAT_PING":
+            clearDisconnectGracePeriod();
+            if (connRef.current && connRef.current.open) {
+              try {
+                connRef.current.send({ type: "HEARTBEAT_PONG", t: data.t });
+              } catch {}
+            }
+            break;
+
+          case "HEARTBEAT_PONG":
+            clearDisconnectGracePeriod();
+            break;
+
           case "GUEST_JOINED":
             setIsPeerJoined(true);
             clearDisconnectGracePeriod();
@@ -517,6 +565,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
       conn.on("close", () => {
         console.log("[PeerJS] DataConnection ditutup.");
+        if (heartbeatTimerRef.current) {
+          clearInterval(heartbeatTimerRef.current);
+          heartbeatTimerRef.current = null;
+        }
         if (callRef.current && callRef.current.open) {
           startDisconnectGracePeriod("DataConnection closed namun MediaCall masih open");
           return;
@@ -779,6 +831,21 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             setupMediaCallRef.current(incomingCall);
           });
 
+          localPeer.on("disconnected", () => {
+            console.warn("[PeerJS] Host terputus dari server sinyal cloud. Mencoba menyambung kembali...");
+            if (!isDestroyedRef.current && localPeer && !localPeer.destroyed) {
+              setTimeout(() => {
+                try {
+                  if (!localPeer.destroyed && localPeer.disconnected) {
+                    localPeer.reconnect();
+                  }
+                } catch (e) {
+                  console.warn("[PeerJS] Host reconnect error:", e);
+                }
+              }, 1200);
+            }
+          });
+
           localPeer.on("error", (err) => {
             if (isDestroyedRef.current) return;
 
@@ -835,6 +902,21 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             setupMediaCallRef.current(incomingCall);
           });
 
+          guestPeer.on("disconnected", () => {
+            console.warn("[PeerJS] Tamu terputus dari server sinyal cloud. Mencoba menyambung kembali...");
+            if (!isDestroyedRef.current && guestPeer && !guestPeer.destroyed) {
+              setTimeout(() => {
+                try {
+                  if (!guestPeer.destroyed && guestPeer.disconnected) {
+                    guestPeer.reconnect();
+                  }
+                } catch (e) {
+                  console.warn("[PeerJS] Guest reconnect error:", e);
+                }
+              }, 1200);
+            }
+          });
+
           guestPeer.on("error", (guestErr) => {
             console.warn("[PeerJS] Guest peer error:", guestErr);
             if (guestErr.type === "peer-unavailable") {
@@ -853,6 +935,10 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
     return () => {
       isDestroyedRef.current = true;
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
       if (disconnectTimerRef.current) {
         clearTimeout(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
