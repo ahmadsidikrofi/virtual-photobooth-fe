@@ -11,9 +11,11 @@ import { PhotoCuratingScreen } from "./PhotoCuratingScreen";
 import { StripDesignScreen } from "./StripDesignScreen";
 import { MediaPermissionDialog } from "./MediaPermissionDialog";
 import { DeviceSettingsModal } from "./DeviceSettingsModal";
+import { VirtualBackgroundSelector } from "@/components/virtual-background/VirtualBackgroundSelector";
 import { usePhotoboothEngine } from "@/hooks/usePhotoboothEngine";
 import { usePeerRoom } from "@/hooks/usePeerRoom";
 import { useHandGesture } from "@/hooks/useHandGesture";
+import { useVirtualBackground } from "@/hooks/useVirtualBackground";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { saveCuratedSession, GRID_CONFIGS } from "@/lib/room";
@@ -65,11 +67,18 @@ export function RoomLobby({ roomId }) {
   const [isSwitchingDevice, setIsSwitchingDevice] = useState(false);
   const [isGestureEnabled, setIsGestureEnabled] = useState(false);
 
+  // 0. Virtual Background Hook (MediaPipe ImageSegmenter GPU & Compositing Canvas)
+  const { activeStream, processingCanvasRef } = useVirtualBackground({
+    rawStream: mediaStream,
+    cameraActive,
+  });
+
   // 1. Photobooth Engine Hook (Hardware Capture Loop & Countdown Audio)
   const engine = usePhotoboothEngine({
     localVideoRef,
     remoteVideoRef,
     totalShots: 8,
+    processingCanvasRef,
   });
 
   // 2. Real-time PeerJS WebRTC Connection Hook
@@ -92,7 +101,7 @@ export function RoomLobby({ roomId }) {
     handlePeerLeave,
   } = usePeerRoom({
     roomId,
-    localStream: mediaStream,
+    localStream: activeStream,
     onRemoteStartSession: () => {
       engine.startSession();
     },
@@ -1040,7 +1049,7 @@ export function RoomLobby({ roomId }) {
           >
             <LocalVideoStage
               videoRef={localVideoRef}
-              stream={mediaStream}
+              stream={activeStream}
               cameraActive={cameraActive}
               isLoadingCamera={isLoadingCamera}
               cameraPermission={cameraPermission}
@@ -1150,6 +1159,9 @@ export function RoomLobby({ roomId }) {
         isGestureEnabled={isGestureEnabled}
         onToggleGesture={() => setIsGestureEnabled((prev) => !prev)}
       />
+
+      {/* Drawer Pemilih Latar Studio & Efek Blur (Snap Points) */}
+      <VirtualBackgroundSelector />
     </div>
   );
 }

@@ -10,10 +10,12 @@ import {
   Settings,
   Loader2,
   Lock,
+  Wallpaper,
 } from "lucide-react";
 import { PhotoboothCountdownOverlay } from "./PhotoboothCountdownOverlay";
 import { GestureIcon } from "./GestureIcon";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
+import { useVirtualBackgroundStore } from "@/stores/useVirtualBackgroundStore";
 
 export function LocalVideoStage({
   videoRef,
@@ -58,6 +60,8 @@ export function LocalVideoStage({
   const transitionText = propTransitionText ?? storeTransitionText;
   const isMirrored = propIsMirrored ?? storeIsMirrored;
   const onToggleMirror = propOnToggleMirror ?? storeToggleMirror;
+  const backgroundMode = useVirtualBackgroundStore((s) => s.backgroundMode);
+  const isVirtualBackgroundActive = backgroundMode !== "none";
   // Self-healing: Guarantee stream is attached and playing whenever element is mounted
   useEffect(() => {
     if (videoRef?.current && stream && cameraActive) {
@@ -228,6 +232,32 @@ export function LocalVideoStage({
                 <Settings className="size-3.5" />
               </button>
             )}
+
+            {/* Tombol Latar Studio & Blur (Wallpaper / Backdrop) */}
+            <button
+              type="button"
+              disabled={isCapturingSession || !cameraActive}
+              onClick={() => useVirtualBackgroundStore.getState().setIsSelectorOpen(true)}
+              title={
+                !cameraActive
+                  ? "Nyalakan kamera untuk mengaktifkan latar studio"
+                  : isVirtualBackgroundActive
+                  ? "Ubah Latar Studio (Sedang Aktif)"
+                  : "Pilih Latar Studio / Blur"
+              }
+              className={`relative flex size-8 items-center justify-center rounded-full backdrop-blur-md border transition-all ${
+                !cameraActive || isCapturingSession
+                  ? "opacity-40 cursor-not-allowed bg-black/40 border-white/10 text-white/50"
+                  : isVirtualBackgroundActive
+                  ? "bg-amber-400 border-amber-300 text-black shadow-md hover:scale-105 cursor-pointer active:scale-95"
+                  : "bg-black/60 border-white/20 text-white hover:bg-black/80 hover:scale-105 cursor-pointer active:scale-95"
+              }`}
+            >
+              <Wallpaper className="size-3.5" />
+              {isVirtualBackgroundActive && (
+                <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-white ring-1 ring-amber-500" />
+              )}
+            </button>
 
             <button
               type="button"

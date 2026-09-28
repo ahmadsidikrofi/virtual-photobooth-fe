@@ -3,12 +3,13 @@
 import { useRef, useCallback, useEffect } from "react";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 import { useRoomStore } from "@/stores/useRoomStore";
+import { useVirtualBackgroundStore } from "@/stores/useVirtualBackgroundStore";
 
 // Helper: Draw video frame with object-fit: cover into destination rect (dx, dy, dWidth, dHeight)
 function drawVideoCover(ctx, video, dx, dy, dWidth, dHeight, isMirrored = false) {
   if (!video) return;
-  const vWidth = video.videoWidth || 1280;
-  const vHeight = video.videoHeight || 720;
+  const vWidth = video.videoWidth || video.naturalWidth || video.width || 1280;
+  const vHeight = video.videoHeight || video.naturalHeight || video.height || 720;
   const targetRatio = dWidth / dHeight;
   const videoRatio = vWidth / vHeight;
 
@@ -47,6 +48,7 @@ export function usePhotoboothEngine({
   role: propRole,
   isHost: propIsHost,
   totalShots = 8,
+  processingCanvasRef,
 } = {}) {
   // Connect to global photobooth store
   const selectedLayout = usePhotoboothStore((s) => s.selectedLayout);
@@ -178,7 +180,11 @@ export function usePhotoboothEngine({
 
   // Capture current video frame(s) to temporary high-res canvas (Solo or Duo Side-by-Side)
   const captureFrame = useCallback(() => {
-    const localVideo = localVideoRef?.current;
+    const isVbActive = useVirtualBackgroundStore.getState().backgroundMode !== "none";
+    const processingCanvas = processingCanvasRef?.current;
+    // Jika Virtual Background aktif: Ambil frame langsung dari processingCanvas (720p composite)
+    // Jika nonaktif: Ambil frame resolusi penuh dari localVideoRef kamera mentah
+    const localVideo = isVbActive && processingCanvas ? processingCanvas : localVideoRef?.current;
     if (!localVideo) return null;
 
     let canvas = hiddenCanvasRef.current;
@@ -243,7 +249,7 @@ export function usePhotoboothEngine({
 
     // Ekspor kanvas ke Data URL: canvas.toDataURL("image/jpeg", 0.92)
     return canvas.toDataURL("image/jpeg", 0.92);
-  }, [localVideoRef, remoteVideoRef]);
+  }, [localVideoRef, remoteVideoRef, processingCanvasRef]);
 
   // Execute a single shot cycle: countdown -> flash -> canvas capture -> transition/finish (8 Shots otomatis)
   const executeShot = useCallback(
