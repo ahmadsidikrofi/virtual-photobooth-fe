@@ -42,6 +42,16 @@ function drawCover(ctx, source, destWidth, destHeight) {
   );
 }
 
+// Hermite cubic smoothstep S-Curve:
+// Mengeliminasi noise latar di bawah 0.10 dan memastikan tubuh solid di atas 0.85
+// Menghasilkan gradien alpha tepi yang memudar secara optis alami seperti Google Meet
+function getSmoothAlpha(conf) {
+  if (conf <= 0.10) return 0;
+  if (conf >= 0.85) return 255;
+  const t = (conf - 0.10) / 0.75;
+  return Math.round(t * t * (3 - 2 * t) * 255);
+}
+
 /**
  * useVirtualBackground
  * Hook client-side untuk memproses virtual background (blur & studio backdrop)
@@ -71,11 +81,15 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
   const hiddenVideoRef = useRef(null);
   const processingCanvasRef = useRef(null);
   const inputCanvasRef = useRef(null);
+  const rawMaskCanvasRef = useRef(null);
   const maskCanvasRef = useRef(null);
-  const personCanvasRef = useRef(null);
   const processedStreamRef = useRef(null);
   const animFrameIdRef = useRef(null);
   const lastTimestampRef = useRef(-1);
+  const lastInferenceTimeRef = useRef(0);
+  const isInferencingRef = useRef(false);
+  const prevConfidenceRef = useRef(null);
+  const hasValidMaskRef = useRef(false);
   const imageCacheRef = useRef(new Map());
   const failedUrlsRef = useRef(new Set());
 
@@ -102,24 +116,24 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
 
     if (!inputCanvasRef.current) {
       const canvas = document.createElement("canvas");
-      // Resolusi kecil untuk inferensi AI cepat (256x144)
-      canvas.width = 256;
-      canvas.height = 144;
+      // Resolusi inferensi 320x180: tajam untuk tepi tubuh & ringan untuk GPU (~3ms)
+      canvas.width = 320;
+      canvas.height = 180;
       inputCanvasRef.current = canvas;
+    }
+
+    if (!rawMaskCanvasRef.current) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 180;
+      rawMaskCanvasRef.current = canvas;
     }
 
     if (!maskCanvasRef.current) {
       const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 144;
-      maskCanvasRef.current = canvas;
-    }
-
-    if (!personCanvasRef.current) {
-      const canvas = document.createElement("canvas");
       canvas.width = 1280;
       canvas.height = 720;
-      personCanvasRef.current = canvas;
+      maskCanvasRef.current = canvas;
     }
 
     return () => {
@@ -180,8 +194,8 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
             delegate: "GPU",
           },
           runningMode: "VIDEO",
-          outputCategoryMask: true,
-          outputConfidenceMasks: false,
+          outputCategoryMask: false,
+          outputConfidenceMasks: true,
         });
       } catch (localGpuErr) {
         console.warn("[VirtualBackground] GPU lokal gagal, mencoba CPU lokal:", localGpuErr);
@@ -192,8 +206,8 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
               delegate: "CPU",
             },
             runningMode: "VIDEO",
-            outputCategoryMask: true,
-            outputConfidenceMasks: false,
+            outputCategoryMask: false,
+            outputConfidenceMasks: true,
           });
         } catch (localCpuErr) {
           console.warn("[VirtualBackground] Model lokal gagal, fallback ke Google CDN:", localCpuErr);
@@ -205,8 +219,8 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
                 delegate: "GPU",
               },
               runningMode: "VIDEO",
-              outputCategoryMask: true,
-              outputConfidenceMasks: false,
+              outputCategoryMask: false,
+              outputConfidenceMasks: true,
             });
           } catch (cdnGpuErr) {
             console.warn("[VirtualBackground] CDN GPU gagal, fallback CDN CPU:", cdnGpuErr);
@@ -216,8 +230,8 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
                 delegate: "CPU",
               },
               runningMode: "VIDEO",
-              outputCategoryMask: true,
-              outputConfidenceMasks: false,
+              outputCategoryMask: false,
+              outputConfidenceMasks: true,
             });
           }
         }
@@ -309,6 +323,10 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
         cancelAnimationFrame(animFrameIdRef.current);
         animFrameIdRef.current = null;
       }
+      prevConfidenceRef.current = null;
+      lastInferenceTimeRef.current = 0;
+      hasValidMaskRef.current = false;
+
       // Hentikan track video kanvas dan bebaskan memori captureStream
       if (processedStreamRef.current) {
         processedStreamRef.current.getTracks().forEach((track) => {
@@ -335,15 +353,16 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
 
     const render = () => {
       if (isCancelled) return;
+      const now = performance.now();
 
       const video = hiddenVideoRef.current;
       const processingCanvas = processingCanvasRef.current;
       const inputCanvas = inputCanvasRef.current;
+      const rawMaskCanvas = rawMaskCanvasRef.current;
       const maskCanvas = maskCanvasRef.current;
-      const personCanvas = personCanvasRef.current;
       const segmenter = segmenterRef.current;
 
-      if (!video || !processingCanvas || !inputCanvas || !maskCanvas || !personCanvas) {
+      if (!video || !processingCanvas || !inputCanvas || !rawMaskCanvas || !maskCanvas) {
         animFrameIdRef.current = requestAnimationFrame(render);
         return;
       }
@@ -362,113 +381,126 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
       ) {
         const pCtx = processingCanvas.getContext("2d");
         const inCtx = inputCanvas.getContext("2d", { willReadFrequently: true });
+        const rawMaskCtx = rawMaskCanvas.getContext("2d");
         const maskCtx = maskCanvas.getContext("2d");
-        const personCtx = personCanvas.getContext("2d");
 
         if (pCtx) {
-          if (segmenter && inCtx && maskCtx && personCtx) {
+          // 1. Eksekusi inferensi AI MediaPipe secara terukur (~30 FPS / setiap 33ms)
+          // Memisahkan inferensi AI (30 FPS) dari render kanvas (60 FPS) mencegah GPU/CPU lag
+          if (
+            segmenter &&
+            inCtx &&
+            rawMaskCtx &&
+            maskCtx &&
+            !isInferencingRef.current &&
+            now - lastInferenceTimeRef.current >= 33 &&
+            now > lastTimestampRef.current
+          ) {
+            isInferencingRef.current = true;
+            lastInferenceTimeRef.current = now;
+            lastTimestampRef.current = now;
+
             try {
-              const now = performance.now();
-              if (now > lastTimestampRef.current) {
-                lastTimestampRef.current = now;
+              // Perkecil frame ke inputCanvas (320x180) untuk inferensi AI tajam & ringan
+              inCtx.drawImage(video, 0, 0, 320, 180);
 
-                // 1. Perkecil frame ke inputCanvas (256x144) untuk inferensi AI ringan
-                inCtx.drawImage(video, 0, 0, 256, 144);
+              // Eksekusi segmentasi video MediaPipe (Continuous Confidence Matting)
+              const result = segmenter.segmentForVideo(inputCanvas, now);
 
-                // 2. Eksekusi segmentasi video MediaPipe
-                const result = segmenter.segmentForVideo(inputCanvas, now);
+              if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+                const personMask = result.confidenceMasks[0];
+                const confArray = personMask.getAsFloat32Array();
+                const mWidth = personMask.width;
+                const mHeight = personMask.height;
 
-                if (result && result.categoryMask) {
-                  const maskArray = result.categoryMask.getAsUint8Array();
-                  const mWidth = result.categoryMask.width;
-                  const mHeight = result.categoryMask.height;
+                // Konversi continuous float confidence ke rawMaskCanvas (320x180) dengan temporal EMA
+                const rawMaskImageData = rawMaskCtx.createImageData(mWidth, mHeight);
+                const pixels = rawMaskImageData.data;
 
-                  // 3. Konversi masker ke maskCanvas
-                  // Area Orang (foreground): Alpha = 255 (Webcam pengguna terlihat)
-                  // Area Ruangan / Latar Asli (background): Alpha = 0 (Transparan)
-                  const maskImageData = maskCtx.createImageData(mWidth, mHeight);
-                  const pixels = maskImageData.data;
-
-                  for (let i = 0; i < maskArray.length; i++) {
-                    // MediaPipe Selfie Segmenter:
-                    // index 0 adalah tubuh/orang (foreground)
-                    // index > 0 adalah ruangan fisik / latar belakang asli
-                    const isPerson = maskArray[i] === 0;
-                    const idx = i * 4;
-                    pixels[idx] = 255;
-                    pixels[idx + 1] = 255;
-                    pixels[idx + 2] = 255;
-                    pixels[idx + 3] = isPerson ? 255 : 0;
-                  }
-                  maskCtx.putImageData(maskImageData, 0, 0);
-
-                  // 4. Siapkan personCanvas: Potong HANYA tubuh pengguna dari webcam asli
-                  personCtx.clearRect(0, 0, 1280, 720);
-                  drawCover(personCtx, video, 1280, 720);
-
-                  // Terapkan masking: pertahankan orang (Alpha 255), hapus ruangan (Alpha 0)
-                  personCtx.globalCompositeOperation = "destination-in";
-                  personCtx.drawImage(maskCanvas, 0, 0, 1280, 720);
-                  personCtx.globalCompositeOperation = "source-over";
-
-                  // =========================================================================
-                  // Standard Composite Pipeline:
-                  // a. Bersihkan processingCanvas: ctx.clearRect(0, 0, width, height);
-                  // b. Gambar tubuh pengguna yang sudah di-mask (hanya orangnya saja)
-                  // c. Gambar latar belakang studio di bawah tubuh (destination-over)
-                  // d. Kembalikan mode operasi: ctx.globalCompositeOperation = 'source-over';
-                  // =========================================================================
-
-                  // a. Bersihkan canvas
-                  pCtx.clearRect(0, 0, 1280, 720);
-
-                  // b. Gambar tubuh pengguna yang sudah di-mask
-                  pCtx.drawImage(personCanvas, 0, 0, 1280, 720);
-
-                  // c. Gambar latar belakang di bawah tubuh pengguna
-                  pCtx.globalCompositeOperation = "destination-over";
-
-                  if (backgroundMode === "blur") {
-                    // Efek Bokeh Studio Blur
-                    pCtx.save();
-                    const blurPx =
-                      blurIntensity === "strong"
-                        ? "24px"
-                        : blurIntensity === "subtle"
-                        ? "8px"
-                        : "14px";
-                    pCtx.filter = `blur(${blurPx})`;
-                    pCtx.drawImage(video, -20, -20, 1320, 760);
-                    pCtx.restore();
-                  } else {
-                    // Efek Gambar Preset Studio atau Custom Upload
-                    const bgImage = getActiveBackgroundImage();
-                    if (bgImage && bgImage.complete && !bgImage.__hasError && bgImage.naturalWidth > 0) {
-                      drawCover(pCtx, bgImage, 1280, 720);
-                    } else {
-                      // Warna cadangan studio jika gambar masih mengunduh atau gagal
-                      const preset = VIRTUAL_BACKGROUND_PRESETS.find(
-                        (p) => p.id === selectedPresetId
-                      );
-                      pCtx.fillStyle = preset?.previewColor || "#2A2723";
-                      pCtx.fillRect(0, 0, 1280, 720);
-                    }
-                  }
-
-                  // d. Kembalikan mode operasi standar
-                  pCtx.globalCompositeOperation = "source-over";
-
-                  if (typeof result.close === "function") {
-                    result.close();
-                  }
+                let prevConf = prevConfidenceRef.current;
+                if (!prevConf || prevConf.length !== confArray.length) {
+                  prevConf = new Float32Array(confArray.length);
+                  prevConfidenceRef.current = prevConf;
+                  prevConf.set(confArray);
                 }
+
+                for (let i = 0; i < confArray.length; i++) {
+                  const rawConf = confArray[i];
+                  // Temporal EMA smoothing: 75% frame baru + 25% frame lama (meredam flickering tepi)
+                  const smoothedConf = prevConf[i] * 0.25 + rawConf * 0.75;
+                  prevConf[i] = smoothedConf;
+
+                  const alpha = getSmoothAlpha(smoothedConf);
+                  const idx = i * 4;
+                  pixels[idx] = 255;
+                  pixels[idx + 1] = 255;
+                  pixels[idx + 2] = 255;
+                  pixels[idx + 3] = alpha;
+                }
+                rawMaskCtx.putImageData(rawMaskImageData, 0, 0);
+
+                // Render masker ke resolusi 720p dengan filter blur optis lembut (Google Meet style)
+                maskCtx.clearRect(0, 0, 1280, 720);
+                maskCtx.imageSmoothingEnabled = true;
+                maskCtx.imageSmoothingQuality = "high";
+                maskCtx.filter = "blur(3.5px)";
+                maskCtx.drawImage(rawMaskCanvas, 0, 0, 1280, 720);
+                maskCtx.filter = "none";
+
+                hasValidMaskRef.current = true;
+              }
+
+              if (result && typeof result.close === "function") {
+                result.close();
               }
             } catch (inferErr) {
               console.debug("[VirtualBackground] Skip frame:", inferErr);
+            } finally {
+              isInferencingRef.current = false;
             }
+          }
+
+          // 2. Render komposit ke processingCanvas (1280x720) pada 60 FPS penuh tanpa patah-patah
+          if (hasValidMaskRef.current && maskCtx) {
+            // a. Gambarkan frame video webcam asli
+            pCtx.clearRect(0, 0, 1280, 720);
+            drawCover(pCtx, video, 1280, 720);
+
+            // b. Potong area ruangan menggunakan masker halus (Alpha Matting)
+            pCtx.globalCompositeOperation = "destination-in";
+            pCtx.drawImage(maskCanvas, 0, 0, 1280, 720);
+
+            // c. Tempelkan latar studio / blur DI BAWAH tubuh pengguna
+            pCtx.globalCompositeOperation = "destination-over";
+
+            if (backgroundMode === "blur") {
+              pCtx.save();
+              const blurPx =
+                blurIntensity === "strong"
+                  ? "24px"
+                  : blurIntensity === "subtle"
+                  ? "8px"
+                  : "14px";
+              pCtx.filter = `blur(${blurPx})`;
+              pCtx.drawImage(video, -20, -20, 1320, 760);
+              pCtx.restore();
+            } else {
+              const bgImage = getActiveBackgroundImage();
+              if (bgImage && bgImage.complete && !bgImage.__hasError && bgImage.naturalWidth > 0) {
+                drawCover(pCtx, bgImage, 1280, 720);
+              } else {
+                const preset = VIRTUAL_BACKGROUND_PRESETS.find(
+                  (p) => p.id === selectedPresetId
+                );
+                pCtx.fillStyle = preset?.previewColor || "#2A2723";
+                pCtx.fillRect(0, 0, 1280, 720);
+              }
+            }
+
+            // d. Kembalikan mode operasi standar
+            pCtx.globalCompositeOperation = "source-over";
           } else {
-            // Selama segmenter AI sedang mengunduh, tampilkan frame video langsung di canvas
-            // sehingga pengguna tidak mengalami layar hitam atau jeda
+            // Selama segmenter AI belum menghasilkan masker pertama, tampilkan video asli
             pCtx.clearRect(0, 0, 1280, 720);
             drawCover(pCtx, video, 1280, 720);
           }
