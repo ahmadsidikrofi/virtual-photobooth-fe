@@ -4,7 +4,7 @@ import { create } from "zustand";
 
 export const useRoomStore = create((set) => ({
   // Studio Mode: "solo" (Studio Solo) or "duo" (Bilik Berdua)
-  studioMode: "duo",
+  studioMode: "solo",
   copied: false,
   role: null, // "host" | "guest" | null
   activeGuestId: null, // string | null (hanya di sisi host untuk membatasi 1 guest)

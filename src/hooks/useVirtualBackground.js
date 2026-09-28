@@ -44,7 +44,7 @@ function drawCover(ctx, source, destWidth, destHeight) {
 
 // Hermite cubic smoothstep S-Curve:
 // Mengeliminasi noise latar di bawah 0.10 dan memastikan tubuh solid di atas 0.85
-// Menghasilkan gradien alpha tepi yang memudar secara optis alami seperti Google Meet
+// Menghasilkan gradien alpha tepi yang memudar secara optis alami
 function getSmoothAlpha(conf) {
   if (conf <= 0.10) return 0;
   if (conf >= 0.85) return 255;
@@ -155,7 +155,7 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
       if (video.srcObject !== rawStream) {
         video.srcObject = rawStream;
       }
-      video.play().catch(() => {});
+      video.play().catch(() => { });
     } else {
       video.srcObject = null;
     }
@@ -333,7 +333,7 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
           if (track.kind === "video") {
             try {
               track.stop();
-            } catch {}
+            } catch { }
           }
         });
         processedStreamRef.current = null;
@@ -369,7 +369,7 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
 
       // Pastikan hidden video memutar frame
       if (video.paused && video.readyState >= 2) {
-        video.play().catch(() => {});
+        video.play().catch(() => { });
       }
 
       // Pastikan frame video siap dan memiliki dimensi
@@ -479,8 +479,8 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
                 blurIntensity === "strong"
                   ? "24px"
                   : blurIntensity === "subtle"
-                  ? "8px"
-                  : "14px";
+                    ? "8px"
+                    : "14px";
               pCtx.filter = `blur(${blurPx})`;
               pCtx.drawImage(video, -20, -20, 1320, 760);
               pCtx.restore();
@@ -562,7 +562,7 @@ export function useVirtualBackground({ rawStream, cameraActive = true }) {
       if (segmenterRef.current) {
         try {
           segmenterRef.current.close();
-        } catch {}
+        } catch { }
         segmenterRef.current = null;
       }
     };
