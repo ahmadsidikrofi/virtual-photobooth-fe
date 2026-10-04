@@ -4,33 +4,32 @@ import { useEffect, useRef, useCallback } from "react";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
-// Konfigurasi WebRTC STUN & TURN multi-server untuk kehandalan NAT traversal di berbagai ISP (Wi-Fi, 4G/5G, Symmetric NAT)
 const PEER_CONFIG = {
   iceServers: [
-    // STUN Servers (Google & Cloudflare) - Ringkas dan cepat agar tidak memenuhi tabel NAT router Wi-Fi
+    // 1. STUN Publik (Google & Cloudflare) - Prioritas utama agar koneksi ramah menghemat kuota TURN
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    // TURN Relay Servers (Open Relay Project by Metered.ca)
-    // Berfungsi meneruskan paket video & data saat terhalang Symmetric NAT / data seluler 4G/5G
+    { urls: "stun:stun.relay.metered.ca:80" },
+    // 2. TURN Relay Singapura (Metered.ca) - Solusi tembus router Wi-Fi & Symmetric NAT
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:sg.relay.metered.ca:80",
+      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
     },
     {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:sg.relay.metered.ca:80?transport=tcp",
+      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
     },
     {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:sg.relay.metered.ca:443",
+      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
     },
     {
-      urls: "turns:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turns:sg.relay.metered.ca:443?transport=tcp",
+      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
     },
   ],
   iceCandidatePoolSize: 10,
@@ -217,13 +216,13 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
     if (callRef.current) {
       try {
         callRef.current.close();
-      } catch {}
+      } catch { }
       callRef.current = null;
     }
     if (connRef.current) {
       try {
         connRef.current.close();
-      } catch {}
+      } catch { }
       connRef.current = null;
     }
 
@@ -312,7 +311,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           }
           return;
         }
-        handlePeerDisconnect();
+        // Berikan buffer toleransi sebelum menganggap user keluar
+        startDisconnectGracePeriod("MediaCall terputus");
       });
 
       call.on("error", (err) => {
@@ -350,12 +350,12 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               if (typeof pc.restartIce === "function") {
                 pc.restartIce();
               }
-            } catch {}
+            } catch { }
             startDisconnectGracePeriod("MediaCall connectionState failed");
             if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current) {
               try {
                 console.log("[PeerJS] Guest melakukan re-call otomatis ke Host setelah MediaCall connectionState failed...");
-                try { call.close(); } catch {}
+                try { call.close(); } catch { }
                 const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
                 const newCall = peerRef.current.call(hostIdRef.current, streamToSend);
                 if (newCall) setupMediaCallRef.current(newCall);
@@ -381,12 +381,12 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               if (typeof pc.restartIce === "function") {
                 pc.restartIce();
               }
-            } catch {}
+            } catch { }
             startDisconnectGracePeriod("MediaCall ICE failed");
             if (roleRef.current === "guest" && peerRef.current && !peerRef.current.destroyed && hostIdRef.current) {
               try {
                 console.log("[PeerJS] Guest melakukan re-call otomatis ke Host setelah MediaCall ICE failed...");
-                try { call.close(); } catch {}
+                try { call.close(); } catch { }
                 const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
                 const newCall = peerRef.current.call(hostIdRef.current, streamToSend);
                 if (newCall) setupMediaCallRef.current(newCall);
@@ -458,7 +458,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             if (connRef.current && connRef.current.open) {
               try {
                 connRef.current.send({ type: "HEARTBEAT_PING", t: Date.now() });
-              } catch {}
+              } catch { }
             }
           }, 3000);
         }
@@ -477,13 +477,13 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
           try {
             conn.close();
-          } catch {}
+          } catch { }
           try {
             callRef.current?.close();
-          } catch {}
+          } catch { }
           try {
             peerRef.current?.destroy();
-          } catch {}
+          } catch { }
           return;
         }
 
@@ -493,7 +493,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             if (connRef.current && connRef.current.open) {
               try {
                 connRef.current.send({ type: "HEARTBEAT_PONG", t: data.t });
-              } catch {}
+              } catch { }
             }
             break;
 
@@ -573,7 +573,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           startDisconnectGracePeriod("DataConnection closed namun MediaCall masih open");
           return;
         }
-        handlePeerDisconnect();
+        // Berikan buffer toleransi jika koneksi data terputus mendadak karena fluktuasi Wi-Fi
+        startDisconnectGracePeriod("DataConnection terputus mendadak");
       });
 
       conn.on("error", (err) => {
@@ -676,9 +677,9 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
         const senders = pc.getSenders();
         senders.forEach((sender) => {
           if (sender.track?.kind === "video" && videoTrack) {
-            sender.replaceTrack(videoTrack).catch(() => {});
+            sender.replaceTrack(videoTrack).catch(() => { });
           } else if (sender.track?.kind === "audio" && audioTrack) {
-            sender.replaceTrack(audioTrack).catch(() => {});
+            sender.replaceTrack(audioTrack).catch(() => { });
           }
         });
       }
@@ -761,7 +762,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             // Tolak koneksi dari diri sendiri
             if (conn.peer === localPeer.id || (peerRef.current && conn.peer === peerRef.current.id)) {
               console.warn("[PeerJS] Mengabaikan koneksi ke diri sendiri:", conn.peer);
-              try { conn.close(); } catch {}
+              try { conn.close(); } catch { }
               return;
             }
 
@@ -778,8 +779,8 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               );
 
               const rejectAndDisconnect = () => {
-                try { conn.send({ type: "ROOM_FULL" }); } catch {}
-                setTimeout(() => { try { conn.close(); } catch {} }, 500);
+                try { conn.send({ type: "ROOM_FULL" }); } catch { }
+                setTimeout(() => { try { conn.close(); } catch { } }, 500);
               };
 
               if (conn.open) {
@@ -806,7 +807,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               (peerRef.current && incomingCall.peer === peerRef.current.id)
             ) {
               console.warn("[PeerJS] Mengabaikan panggilan dari diri sendiri:", incomingCall.peer);
-              try { incomingCall.close(); } catch {}
+              try { incomingCall.close(); } catch { }
               return;
             }
 
@@ -818,7 +819,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
             if (isOtherGuestActive) {
               console.warn("[PeerJS] Menolak stream video dari tamu tidak sah:", incomingCall.peer);
-              try { incomingCall.close(); } catch {}
+              try { incomingCall.close(); } catch { }
               return;
             }
 
@@ -850,7 +851,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             if (isDestroyedRef.current) return;
 
             if (err.type === "unavailable-id") {
-              try { localPeer.destroy(); } catch {}
+              try { localPeer.destroy(); } catch { }
               console.warn("[PeerJS] Host ID masih dilepas server cloud. Mencoba ulang dalam 800ms...");
               setTimeout(() => {
                 if (!isDestroyedRef.current) {
@@ -859,6 +860,35 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               }, 800);
               return;
             }
+
+            // Tangani gangguan sementara pada server sinyal cloud (0.peerjs.com)
+            const isSignalingError =
+              err.type === "network" ||
+              err.type === "server-error" ||
+              err.type === "socket-error" ||
+              err.type === "socket-closed" ||
+              String(err.message || "").toLowerCase().includes("lost connection") ||
+              String(err.message || "").toLowerCase().includes("could not connect");
+
+            if (isSignalingError) {
+              console.warn("[PeerJS] Terjadi gangguan sinyal cloud pada Host:", err.message || err.type);
+              setTimeout(() => {
+                try {
+                  if (!localPeer.destroyed && localPeer.disconnected) {
+                    localPeer.reconnect();
+                  }
+                } catch (e) {
+                  console.warn("[PeerJS] Host reconnect retry error:", e);
+                }
+              }, 1500);
+
+              // Jika media atau data dengan tamu sudah aktif berjalan, JANGAN gagalkan room!
+              if (connRef.current?.open || callRef.current?.open || isPeerJoined) {
+                console.log("[PeerJS] Sesi Host tetap aktif berkat WebRTC P2P / TURN.");
+                return;
+              }
+            }
+
             console.warn("[PeerJS] Host peer error:", err);
             setPeerConnectionStatus("failed");
           });
@@ -894,7 +924,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
               incomingCall.peer === guestPeer.id ||
               (peerRef.current && incomingCall.peer === peerRef.current.id)
             ) {
-              try { incomingCall.close(); } catch {}
+              try { incomingCall.close(); } catch { }
               return;
             }
             const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
@@ -918,10 +948,40 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           });
 
           guestPeer.on("error", (guestErr) => {
+            if (isDestroyedRef.current) return;
             console.warn("[PeerJS] Guest peer error:", guestErr);
             if (guestErr.type === "peer-unavailable") {
               console.warn("[PeerJS] Host belum online di ruangan ini.");
             }
+
+            // Tangani gangguan sementara pada server sinyal cloud (0.peerjs.com)
+            const isSignalingError =
+              guestErr.type === "network" ||
+              guestErr.type === "server-error" ||
+              guestErr.type === "socket-error" ||
+              guestErr.type === "socket-closed" ||
+              String(guestErr.message || "").toLowerCase().includes("lost connection") ||
+              String(guestErr.message || "").toLowerCase().includes("could not connect");
+
+            if (isSignalingError) {
+              console.warn("[PeerJS] Terjadi gangguan sinyal cloud pada Tamu:", guestErr.message || guestErr.type);
+              setTimeout(() => {
+                try {
+                  if (!guestPeer.destroyed && guestPeer.disconnected) {
+                    guestPeer.reconnect();
+                  }
+                } catch (e) {
+                  console.warn("[PeerJS] Guest reconnect retry error:", e);
+                }
+              }, 1500);
+
+              // Jika media atau data dengan host sudah aktif, jangan gagalkan sesi
+              if (connRef.current?.open || callRef.current?.open || isPeerJoined) {
+                console.log("[PeerJS] Sesi Tamu tetap aktif berkat WebRTC P2P / TURN.");
+                return;
+              }
+            }
+
             setPeerConnectionStatus("failed");
           });
         }
@@ -954,16 +1014,16 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             if (connToDestroy && connToDestroy.open) {
               connToDestroy.send({ type: "PEER_LEAVE" });
             }
-          } catch {}
+          } catch { }
           try {
             callToDestroy?.close();
-          } catch {}
+          } catch { }
           try {
             connToDestroy?.close();
-          } catch {}
+          } catch { }
           try {
             peerToDestroy?.destroy();
-          } catch {}
+          } catch { }
           if (peerRef.current === peerToDestroy) {
             peerRef.current = null;
             callRef.current = null;
