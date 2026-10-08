@@ -4,35 +4,63 @@ import { useEffect, useRef, useCallback } from "react";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { usePhotoboothStore } from "@/stores/usePhotoboothStore";
 
+const METERED_USERNAME = process.env.NEXT_PUBLIC_METERED_TURN_USERNAME || "0ed5a4851ec06d4be61751fe";
+const METERED_CREDENTIAL = process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL || "3MkRhAQ7Fm0Mh6FC";
+
 const PEER_CONFIG = {
   iceServers: [
-    // 1. STUN Publik (Google & Cloudflare) - Prioritas utama agar koneksi ramah menghemat kuota TURN
+    // 1. STUN Servers (Google, Cloudflare, & Metered port 80 & 443)
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
     { urls: "stun:stun.relay.metered.ca:80" },
-    // 2. TURN Relay Singapura (Metered.ca) - Solusi tembus router Wi-Fi & Symmetric NAT
+    { urls: "stun:stun.relay.metered.ca:443" },
+
+    // 2. TURN Relay Global (Metered.ca) - Otomatis memilih edge server terdekat (UDP & TCP 80/443)
+    {
+      urls: "turn:global.relay.metered.ca:80",
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
+    },
+    {
+      urls: "turn:global.relay.metered.ca:80?transport=tcp",
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
+    },
+    {
+      urls: "turn:global.relay.metered.ca:443",
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
+    },
+    {
+      urls: "turns:global.relay.metered.ca:443?transport=tcp",
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
+    },
+
+    // 3. TURN Relay Regional Singapura (sg.relay.metered.ca) - Latensi rendah untuk ISP Indonesia
     {
       urls: "turn:sg.relay.metered.ca:80",
-      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
-      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
     },
     {
       urls: "turn:sg.relay.metered.ca:80?transport=tcp",
-      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
-      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
     },
     {
       urls: "turn:sg.relay.metered.ca:443",
-      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
-      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
     },
     {
       urls: "turns:sg.relay.metered.ca:443?transport=tcp",
-      username: process.env.NEXT_PUBLIC_METERED_TURN_USERNAME,
-      credential: process.env.NEXT_PUBLIC_METERED_TURN_CREDENTIAL,
+      username: METERED_USERNAME,
+      credential: METERED_CREDENTIAL,
     },
   ],
-  iceCandidatePoolSize: 10,
+  // Disetel ke 0 agar browser tidak membombardir server STUN/TURN sebelum negosiasi, mencegah 'checking state' freeze
+  iceCandidatePoolSize: 0,
 };
 
 // Helper: Buat video track fallback (kanvas 640x480) untuk memastikan SDP WebRTC
@@ -323,6 +351,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
       // Pantau RTCPeerConnection untuk pemulihan dan penangkapan track baru
       const pc = call.peerConnection;
       if (pc) {
+        pc.onicecandidateerror = (event) => {
+          console.warn(
+            `[PeerJS MediaCall ICE Error] Server: ${event.url}, Code: ${event.errorCode}, Msg: ${event.errorText}`
+          );
+        };
         pc.ontrack = (event) => {
           console.log("[PeerJS MediaCall] Native ontrack received:", event.track.kind, event.track.id);
           if (event.streams && event.streams[0]) {
@@ -584,6 +617,11 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
 
       const pc = conn.peerConnection;
       if (pc) {
+        pc.onicecandidateerror = (event) => {
+          console.warn(
+            `[PeerJS DataConn ICE Error] Server: ${event.url}, Code: ${event.errorCode}, Msg: ${event.errorText}`
+          );
+        };
         pc.onconnectionstatechange = () => {
           console.log("[PeerJS DataConn] RTCPeerConnection state:", pc.connectionState);
           if (pc.connectionState === "connected") {
@@ -740,7 +778,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           // ==========================================
           localPeer = new Peer(targetHostId, {
             config: PEER_CONFIG,
-            debug: 1,
+            debug: 2,
           });
           peerRef.current = localPeer;
 
@@ -899,7 +937,7 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
           console.log("[PeerJS] Mendaftar sebagai Tamu (Guest)...");
           const guestPeer = new Peer(undefined, {
             config: PEER_CONFIG,
-            debug: 1,
+            debug: 2,
           });
           peerRef.current = guestPeer;
 
@@ -912,10 +950,20 @@ export function usePeerRoom({ roomId, localStream, onRemoteStartSession, onPeerD
             setRemoteStream(null);
             setIsPeerJoined(false);
 
-            // 1. Guest membuat Data Connection ke Host terlebih dahulu
+            // 1. Guest membuat Data Connection ke Host
             console.log("[PeerJS] Tamu membuka DataConnection ke Host:", targetHostId);
             const conn = guestPeer.connect(targetHostId);
             setupDataConnectionRef.current(conn);
+
+            // 2. Guest juga langsung membuka MediaCall ke Host secara paralel (tidak memblokir video)
+            try {
+              console.log("[PeerJS] Tamu membuka MediaCall paralel ke Host:", targetHostId);
+              const streamToSend = ensureStreamWithBothTracks(localStreamRef.current);
+              const call = guestPeer.call(targetHostId, streamToSend);
+              if (call) setupMediaCallRef.current(call);
+            } catch (callErr) {
+              console.warn("[PeerJS] Gagal membuka MediaCall awal:", callErr);
+            }
           });
 
           guestPeer.on("call", (incomingCall) => {
